@@ -687,7 +687,9 @@ class CollaborationMap(Biso):
             # get the list of institutions who collaborated per work:
             works_institutions = [
                 list(set([
-                    institution['id'] for author in work['authorships'] for institution in author['institutions']
+                    institution['id']
+                    for author in work['authorships'] for institution in author.get('institutions', [])
+                    if institution.get('id') is not None
                 ]))
                 for work in works
             ]
@@ -699,6 +701,8 @@ class CollaborationMap(Biso):
             print(f"{len(institutions_id)} unique institutions with which we collaborated on works")
             # remove the https://openalex.org/ at the beginning
             institutions_id = [institution_id[21:] for institution_id in institutions_id]
+            # Filter out any invalid ID: ID that is not strictly 'I' followed by numbers.
+            institutions_id = [i_id for i_id in institutions_id if i_id.startswith('I') and i_id[1:].isdigit()]
             institutions_id.sort()  # sort the list to improve cache usage by openalex-analysis
             # create dictionaries with the institution id as key and lon, lat and name as item
             institutions_name = {}
