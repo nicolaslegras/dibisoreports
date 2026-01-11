@@ -1,5 +1,6 @@
 cff-version: 1.2.0
 title: dibisoplot
+doi: 10.5281/zenodo.17251536
 type: software
 authors:
   - given-names: 'Romain, François'
