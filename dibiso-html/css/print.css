@@ -1,0 +1,20 @@
+@page {
+  size: A4;
+  margin: 30mm;
+}
+
+@page :first {
+  margin: 0;
+}
+
+/* WeasyPrint: repeat table headers across pages */
+thead { display: table-header-group; }
+
+/* Avoid breaking figures and tables across pages */
+figure, table { page-break-inside: avoid; }
+
+/* Each section starts on a new page */
+section h2 { page-break-before: always; }
+
+/* Don't break between a heading and its first content */
+h2, h3 { page-break-after: avoid; }

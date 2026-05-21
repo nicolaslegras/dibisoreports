@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="{{ 'fr' if language is not defined else language }}">
+<head>
+  <meta charset="utf-8">
+  <title>{% block page_title %}{{ labacronym | default('') }} — {% block report_type_label %}Rapport{% endblock %}{% endblock %}</title>
+  <link rel="stylesheet" href="css/{{ report_type | default('biso') }}.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/print.css">
+  {% if has_plotly_figures | default(false) %}
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+  {% endif %}
+</head>
+<body{% if watermark_text %} class="watermark" data-watermark="{{ watermark_text }}"{% endif %}>
+
+{# ── Title page ──────────────────────────────────────────────── #}
+<header class="title-page">
+  <div class="title-page-content">
+    <img class="title-page-logo" src="assets/logo.svg" alt="Université Paris-Saclay">
+    <h1 class="report-title">{% block report_title %}Rapport{% endblock %}</h1>
+    <p class="report-subtitle">{{ labacronym | default('') }}{% if labfullname is defined and labfullname %} — {{ labfullname }}{% endif %}</p>
+    <p class="report-description">{% block title_description %}{% endblock %}</p>
+  </div>
+  {% block title_label %}{% endblock %}
+</header>
+
+{# ── Table of contents ───────────────────────────────────────── #}
+<nav class="toc">
+  <h2>Sommaire</h2>
+  <ol>
+    {% block toc_entries %}{% endblock %}
+  </ol>
+</nav>
+
+{# ── Main report content ─────────────────────────────────────── #}
+<main>
+  {% block main_content %}{% endblock %}
+</main>
+
+{# ── Last page ───────────────────────────────────────────────── #}
+<footer class="last-page">
+  <div class="last-page-content">
+    {% block last_page_content %}
+
+    {# Contact #}
+    <div class="last-page-section">
+      <h3>Contact</h3>
+      <p>DiBISO — Université Paris-Saclay</p>
+    </div>
+
+    {# Data sources #}
+    {% set has_hal = figures.journals_hal is defined or figures.conferences is defined or figures.chapters is defined or figures.open_access_works is defined or figures.journals is defined or figures.collaboration_names is defined %}
+    {% set has_openalex = figures.collaboration_map_world is defined or figures.collaboration_map_europe is defined %}
+    {% set has_scanr = figures.journals is defined or figures.private_sector_collaborations is defined %}
+    {% if has_hal or has_openalex or has_scanr %}
+    <div class="last-page-section">
+      <h3>Sources des données</h3>
+      <dl>
+        {% if has_hal %}
+        <dt><a href="https://hal.science/">HAL</a></dt>
+        <dd>Archive ouverte nationale</dd>
+        {% endif %}
+        {% if has_openalex %}
+        <dt><a href="https://openalex.org/">OpenAlex</a></dt>
+        <dd>Métadonnées bibliométriques</dd>
+        {% endif %}
+        {% if has_scanr %}
+        <dt><a href="https://scanr.enseignementsup-recherche.gouv.fr/">scanR / BSO</a></dt>
+        <dd>Baromètre de la Science Ouverte — {% if bsojournalsbsoversion is defined %}version {{ bsojournalsbsoversion }}{% endif %}</dd>
+        {% endif %}
+      </dl>
+    </div>
+    {% endif %}
+
+    {# Code / tools #}
+    <div class="last-page-section">
+      <h3>Outils</h3>
+      <p>
+        Généré avec
+        <a href="https://github.com/dibiso-upsaclay/dibisoreporting">dibisoreporting</a>
+        {% if dibisoreportingversion is defined %}v{{ dibisoreportingversion }}{% endif %}
+        et
+        <a href="https://github.com/dibiso-upsaclay/dibisoplot">dibisoplot</a>
+        {% if dibisoplotversion is defined %}v{{ dibisoplotversion }}{% endif %}.
+        Données extraites le {{ datafetchdate | default('') }}.
+      </p>
+    </div>
+
+    {% endblock %}
+  </div>
+</footer>
+
+</body>
+</html>
