@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Archive, CheckCircle, Download, FileText, Github, Loader2, XCircle, Lock, UserPlus, LogIn, User, LogOut, Settings } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Archive, CheckCircle, Download, FileText, Github, Loader2, XCircle, Lock, UserPlus, LogIn, User, LogOut, Settings, ArrowLeft, Eye, Edit3 } from 'lucide-react';
+import { marked } from 'marked';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL
 
@@ -50,6 +51,16 @@ const ReportGeneratorInterface = () => {
     password: '',
     role: 'user'
   });
+
+  // Edit Report state
+  const [editMode, setEditMode] = useState(false);
+  const [sections, setSections] = useState([]);
+  const [analyses, setAnalyses] = useState({});
+  const [savingStatus, setSavingStatus] = useState({});
+  const [showPreview, setShowPreview] = useState({});
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportStatus, setExportStatus] = useState(null);
+  const saveTimers = useRef({});
 
   // Effect to check authentication status when the component mounts
   useEffect(() => {
@@ -406,15 +417,24 @@ const ReportGeneratorInterface = () => {
         setPolling(false);
         try {
           const resultResponse = await fetch(`${API_BASE_URL}/compilation-result/${compId}`, {
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
+            headers: { 'Authorization': `Bearer ${token}` }
           });
-          if (!resultResponse.ok) {
-            throw new Error('Failed to fetch compilation result');
-          }
+          if (!resultResponse.ok) throw new Error('Failed to fetch compilation result');
           const result = await resultResponse.json();
           setCompilationResult({ ...result, status: 'completed' });
+
+          // Load sections and existing analyses, then enter edit mode
+          try {
+            const [secRes, anaRes] = await Promise.all([
+              fetch(`${API_BASE_URL}/report-sections/${compId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
+              fetch(`${API_BASE_URL}/analyses/${compId}`,         { headers: { 'Authorization': `Bearer ${token}` } }),
+            ]);
+            if (secRes.ok) setSections(await secRes.json());
+            if (anaRes.ok) setAnalyses(await anaRes.json());
+            setEditMode(true);
+          } catch (e) {
+            console.error('Failed to load sections/analyses:', e);
+          }
         } catch (err) {
           setError(`Failed to fetch result: ${err.message}`);
         }
@@ -512,6 +532,66 @@ const ReportGeneratorInterface = () => {
     }
   };
 
+  // ── Edit Report handlers ──────────────────────────────────────────────
+
+  const handleAnalysisChange = (sectionId, value) => {
+    setAnalyses(prev => ({ ...prev, [sectionId]: value }));
+    setSavingStatus(prev => ({ ...prev, [sectionId]: 'saving' }));
+    clearTimeout(saveTimers.current[sectionId]);
+    saveTimers.current[sectionId] = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/analyses/${compilationId}/${sectionId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ content: value }),
+        });
+        setSavingStatus(prev => ({ ...prev, [sectionId]: res.ok ? 'saved' : 'error' }));
+      } catch {
+        setSavingStatus(prev => ({ ...prev, [sectionId]: 'error' }));
+      }
+    }, 1000);
+  };
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    setExportStatus({ message: 'Rendering report...' });
+    try {
+      const res = await fetch(`${API_BASE_URL}/export/${compilationId}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      pollExportStatus();
+    } catch (e) {
+      setExportStatus({ message: `Export failed: ${e.message}` });
+      setIsExporting(false);
+    }
+  };
+
+  const pollExportStatus = () => {
+    const poll = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/compilation-status/${compilationId}`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!res.ok) { setIsExporting(false); return; }
+        const status = await res.json();
+        if (status.export_status === 'done') {
+          setIsExporting(false);
+          setExportStatus({ message: 'Report exported successfully!', pdf_url: status.export_pdf_url });
+        } else if (status.export_status === 'failed') {
+          setIsExporting(false);
+          setExportStatus({ message: 'Export failed. Please try again.' });
+        } else {
+          setTimeout(poll, 500);
+        }
+      } catch { setIsExporting(false); }
+    };
+    setTimeout(poll, 500);
+  };
+
+  // ─────────────────────────────────────────────────────────────────────
+
   const handleDownload = async (type, fileName = null) => {
     if (!compilationResult) return;
     setIsDownloading(prev => ({ ...prev, [type]: true }));
@@ -578,6 +658,102 @@ const ReportGeneratorInterface = () => {
       setError(`Cancellation failed: ${err.message}`);
     }
   };
+
+  // ── Edit Report view ─────────────────────────────────────────────────
+  if (editMode) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white">
+        {/* Sticky header */}
+        <div className="sticky top-0 z-10 bg-gray-900 border-b border-gray-700 px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button onClick={() => setEditMode(false)}
+              className="text-gray-400 hover:text-white flex items-center gap-2 text-sm">
+              <ArrowLeft className="w-4 h-4" /> Back
+            </button>
+            <h1 className="text-lg font-semibold">
+              Edit Report — {formData.entityAcronym} {formData.year}
+            </h1>
+          </div>
+          <button onClick={handleExport} disabled={isExporting}
+            className="bg-teal-700 hover:bg-teal-800 disabled:bg-teal-500 text-white font-semibold py-2 px-5 rounded-lg transition duration-300 flex items-center gap-2 text-sm">
+            {isExporting ? <Loader2 className="animate-spin w-4 h-4" /> : <Download className="w-4 h-4" />}
+            {isExporting ? 'Exporting…' : 'Export PDF & HTML'}
+          </button>
+        </div>
+
+        {/* Section cards */}
+        <div className="max-w-4xl mx-auto px-6 py-8 space-y-6 pb-24">
+          {sections.map(section => (
+            <div key={section.id} className="bg-gray-800 rounded-xl shadow-lg overflow-hidden">
+              {/* Card header */}
+              <div className="px-5 py-3 bg-gray-700 border-b border-gray-600 flex items-center justify-between">
+                <h2 className="text-base font-semibold">{section.label}</h2>
+                <span className="text-xs text-gray-400">
+                  {savingStatus[section.id] === 'saving' && 'Saving…'}
+                  {savingStatus[section.id] === 'saved'  && '✓ Saved'}
+                  {savingStatus[section.id] === 'error'  && '⚠ Save failed'}
+                </span>
+              </div>
+
+              {/* Figure preview */}
+              {section.has_figure && (
+                <div className="px-5 py-3 border-b border-gray-600 bg-gray-750">
+                  <img
+                    src={`${API_BASE_URL}/figures/${compilationId}/${section.id}`}
+                    alt={section.label}
+                    className="max-w-full rounded max-h-64 object-contain"
+                    onError={e => { e.target.style.display = 'none'; }}
+                  />
+                </div>
+              )}
+
+              {/* Editor */}
+              <div className="px-5 py-4">
+                <div className="flex gap-2 mb-3">
+                  <button onClick={() => setShowPreview(p => ({ ...p, [section.id]: false }))}
+                    className={`text-xs px-3 py-1 rounded flex items-center gap-1 ${!showPreview[section.id] ? 'bg-teal-700 text-white' : 'bg-gray-600 text-gray-300'}`}>
+                    <Edit3 className="w-3 h-3" /> Edit
+                  </button>
+                  <button onClick={() => setShowPreview(p => ({ ...p, [section.id]: true }))}
+                    className={`text-xs px-3 py-1 rounded flex items-center gap-1 ${showPreview[section.id] ? 'bg-teal-700 text-white' : 'bg-gray-600 text-gray-300'}`}>
+                    <Eye className="w-3 h-3" /> Preview
+                  </button>
+                </div>
+
+                {!showPreview[section.id] ? (
+                  <textarea
+                    value={analyses[section.id] || ''}
+                    onChange={e => handleAnalysisChange(section.id, e.target.value)}
+                    placeholder={`Analysis for "${section.label}" (Markdown supported)…`}
+                    rows={5}
+                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent resize-vertical font-mono text-sm"
+                  />
+                ) : (
+                  <div
+                    className="min-h-20 px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-gray-200 text-sm prose prose-invert prose-sm max-w-none"
+                    dangerouslySetInnerHTML={{ __html: marked.parse(analyses[section.id] || '*No content yet.*') }}
+                  />
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Bottom export bar */}
+        {exportStatus && (
+          <div className="fixed bottom-0 left-0 right-0 bg-gray-900 border-t border-gray-700 px-6 py-3 flex items-center justify-between">
+            <span className="text-sm text-gray-300">{exportStatus.message}</span>
+            {exportStatus.pdf_url && (
+              <button onClick={() => handleDownload('pdf', 'report')}
+                className="bg-red-600 hover:bg-red-700 text-white font-medium py-1 px-4 rounded-md text-sm flex items-center gap-2">
+                <Download className="w-4 h-4" /> Download PDF
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-950 to-gray-900">
