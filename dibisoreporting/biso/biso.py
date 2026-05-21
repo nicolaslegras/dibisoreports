@@ -18,8 +18,6 @@ from dibisoplot.biso import WorksType
 
 from dibisoreporting import DibisoReporting
 
-from dibisoreporting.utils import escape_for_latex
-
 from dibisoplot._version import __version__ as dibisoplot_version
 from dibisoreporting._version import __version__ as dibisoreporting_version
 
@@ -135,12 +133,8 @@ class Biso(DibisoReporting):
             year: int | None = None,
             entity_acronym: str = "",
             entity_full_name: str = "",
-            latex_main_file_path: str | None = None,
-            latex_main_file_url: str | None = None,
-            latex_biblio_file_path: str | None = None,
-            latex_biblio_file_url: str | None = None,
-            latex_template_path: str | None = None,
-            latex_template_url: str | None = None,
+            html_template_path: str | None = None,
+            html_template_url: str | None = None,
             max_entities: int | None = 1000,
             max_plotted_entities: int = 25,
             plot_main_color: str | None = None,
@@ -201,16 +195,12 @@ class Biso(DibisoReporting):
         super().__init__(
             entity_id,
             year,
-            latex_main_file_path=latex_main_file_path,
-            latex_main_file_url=latex_main_file_url,
-            latex_biblio_file_path=latex_biblio_file_path,
-            latex_biblio_file_url=latex_biblio_file_url,
-            latex_template_path=latex_template_path,
-            latex_template_url=latex_template_url,
+            html_template_path=html_template_path,
+            html_template_url=html_template_url,
             max_entities=max_entities,
             max_plotted_entities=max_plotted_entities,
             plot_main_color=plot_main_color,
-            root_path = root_path
+            root_path=root_path,
         )
 
         if not entity_acronym:
@@ -272,20 +262,19 @@ class Biso(DibisoReporting):
 
         # check that the HAL collection ID is valid
         url = f"https://api.archives-ouvertes.fr/search/?q=collCode_s:{self.entity_id}&wt=json&rows=0"
-        coll_exists = requests.get(url).json().get('response',{}).get('numFound', 0) > 0
+        coll_exists = requests.get(url).json().get('response', {}).get('numFound', 0) > 0
         if not coll_exists:
             logging.warning(f"Collection ID {self.entity_id} does not exist in HAL.")
 
-        self.add_marco("reportyear", escape_for_latex(str(self.year)))
-        self.add_marco("halcollectionid", escape_for_latex(self.entity_id))
-        self.add_marco("labacronym", escape_for_latex(self.entity_acronym))
-        self.add_marco("labfullname", escape_for_latex(self.entity_full_name))
-        self.add_marco("datafetchdate", escape_for_latex(self.data_fetch_date))
-        self.add_marco("watermarktext", escape_for_latex(self.watermark_text))
-        self.macros.append("")
-        self.add_marco("dibisoplotversion", escape_for_latex(dibisoplot_version))
-        self.add_marco("dibisoreportingversion", escape_for_latex(dibisoreporting_version))
-        self.macros.append("")
+        self.macros_variables["report_type"] = "biso"
+        self.macros_variables["reportyear"] = str(self.year)
+        self.macros_variables["halcollectionid"] = self.entity_id
+        self.macros_variables["labacronym"] = self.entity_acronym
+        self.macros_variables["labfullname"] = self.entity_full_name
+        self.macros_variables["datafetchdate"] = self.data_fetch_date
+        self.macros_variables["watermarktext"] = self.watermark_text
+        self.macros_variables["dibisoplotversion"] = dibisoplot_version
+        self.macros_variables["dibisoreportingversion"] = dibisoreporting_version
 
         super().generate_report(visualizations_to_make, import_default_visualizations)
 

@@ -18,16 +18,15 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Visualization",
-    "Topic :: Text Processing :: Markup :: LaTeX",
+    "Topic :: Text Processing :: Markup :: HTML",
     "Typing :: Typed"
 ]
-keywords = ["DiBISO", "Data analysis", "Scientific research", "Plotly", "LaTeX"]
+keywords = ["DiBISO", "Data analysis", "Scientific research", "Plotly", "Jinja2"]
 dependencies = [
     "dibisoplot>=0.9",
     "requests",
-    "pdfCropMargins",
-    "pypdf",
-    "kaleido==0.2.1"
+    "jinja2>=3.1",
+    "weasyprint>=62"
 ]
 requires-python = ">=3.10"
 
