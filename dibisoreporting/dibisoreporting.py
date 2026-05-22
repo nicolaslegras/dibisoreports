@@ -89,7 +89,10 @@ class DibisoReporting:
         if not os.path.isdir(self.html_template_path):
             raise ValueError(f"HTML template path is not a directory: {self.html_template_path}")
 
+        _skip = {".git", ".hg", ".svn", "__pycache__"}
         for item in os.listdir(self.html_template_path):
+            if item in _skip:
+                continue
             src = os.path.join(self.html_template_path, item)
             dst = os.path.join(self.root_path, item)
             if os.path.isdir(src):
