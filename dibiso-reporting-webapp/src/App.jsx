@@ -823,7 +823,7 @@ const ReportGeneratorInterface = () => {
         downloadFileName = fileName === 'biblio' ? `${filePrefix}_bibliography.pdf` : `${filePrefix}_report.pdf`;
       } else {
         url = `${API_BASE_URL}/download-zip?temp_id=${downloadId}`;
-        downloadFileName = `${filePrefix}_latex_project.zip`;
+        downloadFileName = `${filePrefix}_project.zip`;
       }
 
       const response = await fetch(url, {
@@ -1633,7 +1633,7 @@ const ReportGeneratorInterface = () => {
                     <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded">
                       <p className="text-blue-700 text-sm">
                         <strong>Good news:</strong> Your data has been successfully fetched and the ZIP archive is available for download.
-                        You can download the ZIP file and compile the LaTeX project locally if needed.
+                        You can download the ZIP archive and open the HTML report in a browser.
                       </p>
                     </div>
                     <div className="mt-3">
@@ -1777,7 +1777,7 @@ const ReportGeneratorInterface = () => {
               </div>
               <div className="flex items-start">
                 <div className="bg-teal-700 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold mr-3 mt-0.5 flex-shrink-0">3</div>
-                <p>Download the report in PDF or the ZIP archive containing the full report ready to be opened in a LaTeX editor for further editing.</p>
+                <p>Download the report in PDF format or the ZIP archive containing the HTML report and all figures.</p>
               </div>
             </div>
           </div>

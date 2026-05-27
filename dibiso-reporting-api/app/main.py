@@ -1046,15 +1046,15 @@ def run_compilation(comp_id: str, request_data: ReportRequest):
                     # Partial success - data and ZIP available, but PDF compilation failed
                     compilation_status[comp_id].update({
                         'progress': 100,
-                        'current_step': 'LaTeX compilation failed, but project files are available',
+                        'current_step': 'PDF generation failed, but project files are available',
                         'status': 'partial',
                         'result': {
                             'message': f'Data fetched for {request_data.entity_acronym} ({request_data.year}), '
-                                       f'but PDF compilation failed. You can download the project files.',
+                                       f'but PDF generation failed. You can download the project files.',
                             'pdf_url': None,
                             'zip_url': '/download-zip',
                             'compilation_id': comp_id,
-                            'warning': 'PDF compilation failed or timed out. Download the ZIP to compile locally.'
+                            'warning': 'PDF generation failed. Download the ZIP to open the HTML report in a browser.'
                         },
                         'temp_dir': str(temp_dir),
                         'last_updated': datetime.now()
@@ -1065,7 +1065,7 @@ def run_compilation(comp_id: str, request_data: ReportRequest):
                     f"{compilation_status[comp_id]['status']}"
                 )
 
-        logger.info(f"LaTeX compilation completed for {comp_id} (successful: {compilation_successful})")
+        logger.info(f"Report generation completed for {comp_id} (successful: {compilation_successful})")
 
     except Exception as e:
         logger.error(f"Critical error in background compilation for {comp_id}: {e}")
@@ -1463,7 +1463,7 @@ async def generate_report_endpoint(
     current_user: Annotated[dict, Depends(get_current_active_user)]
 ):
     """
-    Start LaTeX compilation with the provided parameters and return compilation ID for progress tracking.
+    Start report generation with the provided parameters and return a compilation ID for progress tracking.
     Requires authentication.
     """
     # Validate the request (Pydantic will handle basic validation)

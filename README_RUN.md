@@ -1,16 +1,18 @@
 # DiBISOreports — Guide de démarrage et génération de rapports
 
-Ce guide décrit comment démarrer l'application en développement local (Windows) et générer un rapport BiSO, en illustrant avec le labo **LGI** (année **2024**).
+Ce guide décrit comment démarrer l'application et générer un rapport BiSO.
+Deux modes sont disponibles : **Docker** (recommandé pour la production) et **développement local** (Windows, sans Docker).
 
 ---
 
-## Prérequis
+## Prérequis communs
 
-| Outil | Version testée | Rôle |
-|-------|---------------|------|
-| Python | 3.12+ | Backend API + bibliothèques |
-| Node.js / npm | 22+ | Frontend React |
-| pip / venv | — | Gestion des dépendances Python |
+| Outil | Rôle |
+|-------|------|
+| Git | Cloner le dépôt |
+| Docker + Docker Compose | Déploiement recommandé |
+| Python 3.12+ | Développement local uniquement |
+| Node.js / npm 22+ | Développement local uniquement |
 
 ---
 
@@ -18,149 +20,93 @@ Ce guide décrit comment démarrer l'application en développement local (Window
 
 ```
 dibisoreports/
-├── dibiso-html-templates/   ← Templates Jinja2 HTML (local)
-│   └── dibiso-html/         ← Utilisé directement pour éviter le téléchargement GitHub
+├── dibiso-html-templates/   ← Templates Jinja2 HTML
+│   └── dibiso-html/
 ├── dibiso-reporting-api/    ← FastAPI backend
 │   ├── app/
 │   │   ├── main.py          ← Point d'entrée API
 │   │   ├── auth.py          ← JWT authentification
 │   │   └── users.py         ← Gestion utilisateurs (SQLite)
-│   ├── api_data/            ← Base SQLite (créée au 1er démarrage)
-│   ├── .env                 ← Variables d'environnement (à configurer)
-│   └── requirements.txt
+│   ├── docker-compose.yml
+│   ├── Dockerfile
+│   └── .env.template
 ├── dibiso-reporting-webapp/ ← React frontend
 │   ├── src/App.jsx          ← Composant unique
-│   └── .env                 ← VITE_API_URL
-├── dibisoreporting/         ← Bibliothèque Python locale (source)
-├── dibisoplot/              ← Bibliothèque Python locale (source)
-└── .venv/                   ← Environnement virtuel
+│   ├── docker-compose.yml
+│   ├── Dockerfile
+│   └── .env.template
+├── dibisoreporting/         ← Bibliothèque Python locale
+└── dibisoplot/              ← Bibliothèque Python locale
 ```
 
 ---
 
-## 2. Installation des dépendances
+## 2. Déploiement Docker (recommandé)
 
-### 2.1 Environnement virtuel Python
-
-```bash
-# Depuis la racine du projet
-python -m venv .venv
-
-# Activation (Windows PowerShell)
-.\.venv\Scripts\Activate.ps1
-
-# Activation (bash / Git Bash)
-source .venv/Scripts/activate
-```
-
-### 2.2 Installer les bibliothèques locales (IMPORTANT)
-
-Les bibliothèques locales `dibisoreporting` et `dibisoplot` contiennent des fonctionnalités
-(templates HTML, `render_from_saved`) non encore publiées sur PyPI. Il faut les installer
-en mode développement depuis les sources locales :
+### 2.1 Configurer l'API
 
 ```bash
-pip install -e dibisoreporting/ -e dibisoplot/
+cd dibiso-reporting-api
+cp .env.template .env
 ```
 
-> ⚠️ **Ne pas** faire `pip install dibisoreporting` (version PyPI obsolète).
-
-### 2.3 Installer les dépendances de l'API
-
-```bash
-pip install -r dibiso-reporting-api/requirements.txt
-```
-
-### 2.4 Installer les dépendances du frontend
-
-```bash
-cd dibiso-reporting-webapp
-npm install
-cd ..
-```
-
----
-
-## 3. Configuration
-
-### 3.1 API — `dibiso-reporting-api/.env`
-
-Copier `.env.template` vers `.env` et remplir les secrets. Points critiques pour Windows :
+Variables obligatoires à remplir dans `.env` :
 
 ```dotenv
-## Chemin de la base SQLite (relatif à l'API, pas /api_data Linux)
-USERS_DATABASE_NAME=users.db
-USERS_DATABASE_DIRECTORY=./api_data
-
-## Admin créé automatiquement au 1er démarrage si aucun admin n'existe
-ADMIN_USERNAME=hb.admin
-ADMIN_PASSWORD=hb__2026
-
-## Clé JWT (longue chaîne aléatoire)
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=<mot_de_passe>
 SECRET_KEY=<générer avec: python -c "import secrets; print(secrets.token_hex(64))">
 
-## Templates HTML — utiliser le chemin local si disponible (évite le téléchargement GitHub)
-HTML_TEMPLATE_URL=https://github.com/dibiso-upsaclay/dibiso-html-templates/releases/latest
-## IMPORTANT: pointer vers le DOSSIER PARENT de dibiso-html/, pas dibiso-html/ lui-même.
-## render_from_saved cherche {root}/dibiso-html/ et get_html_template_from_path copie
-## le CONTENU du répertoire pointé, donc dibiso-html/ doit être à l'intérieur.
-HTML_TEMPLATE_PATH=C:/path/to/dibisoreports/dibiso-html-templates
+# Volumes Docker (chemins sur l'hôte)
+USERS_DATABASE_DIRECTORY=/chemin/vers/api_data
+OPENALEX_ANALYSIS_CACHE_PATH=/chemin/vers/openalex-cache
 
-## Cache OpenAlex — utiliser le répertoire par défaut de openalex-analysis
-## pour que les données persistent entre sessions
-OPENALEX_ANALYSIS_CACHE_PATH=C:/path/to/openalex-analysis/data
+# Templates HTML — pointer vers le dossier parent de dibiso-html/
+HTML_TEMPLATE_PATH=/chemin/vers/dibiso-html-templates
 
-## Timeout de récupération des données (1ère exécution : 20 min minimum)
-DATA_FETCHING_TIMEOUT_SECONDS=1200
-
-## ScanR
+# ScanR
 SCANR_API_PASSWORD=<mot_de_passe>
 SCANR_API_URL=cluster-production.elasticsearch.dataesr.ovh
 SCANR_API_USERNAME=paris-saclay
 SCANR_BSO_INDEX=bso-publications
 SCANR_PUBLICATIONS_INDEX=scanr-publications
 
-## OpenAlex
+# OpenAlex
 OPENALEX_API_KEY=<clé_api>
 OPENALEX_EMAIL=<email>
 
-## CORS
-CORS_ALLOW_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
-CORS_ALLOW_CREDENTIALS=true
-CORS_ALLOW_METHODS=*
-CORS_ALLOW_HEADERS=*
-
-## Pool de threads
-THREAD_POOL_MAX_WORKERS=4
-ACCESS_TOKEN_EXPIRE_HOURS=48
-PROJECTS_PERSISTENCE_TIME_HOURS=4
-PROJECTS_ANALYSES_RETENTION_DAYS=30
+# CORS — inclure l'URL du frontend
+CORS_ALLOW_ORIGINS=http://localhost:8080,https://reporting.example.com
 ```
 
-> **Attention aux chemins Windows** : utiliser des slashes (`/`) ou des doubles
-> anti-slashes (`\\`). Les anti-slashes simples (`\`) dans les valeurs `.env`
-> provoquent des erreurs `SyntaxError: unicode escape` dans le sous-processus Python.
+### 2.2 Configurer le frontend
 
-### 3.2 Webapp — `dibiso-reporting-webapp/.env`
+```bash
+cd dibiso-reporting-webapp
+cp .env.template .env
+```
 
 ```dotenv
-VITE_API_URL=http://127.0.0.1:8000
+VITE_API_URL=http://127.0.0.1:8000   # URL de l'API accessible depuis le navigateur
+WEBAPP_PORT=127.0.0.1:8080
 ```
 
----
+### 2.3 Démarrer les services
 
-## 4. Démarrage des services
-
-### 4.1 Démarrer l'API
-
-```powershell
-# Depuis dibiso-reporting-api/ (important : ne pas lancer depuis la racine du projet)
+```bash
+# API
 cd dibiso-reporting-api
-..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+docker-compose up -d
+
+# Frontend (dans un autre terminal)
+cd dibiso-reporting-webapp
+docker-compose up -d
 ```
 
-Au 1er démarrage :
-- La base SQLite est créée dans `api_data/users.db`
+L'interface est accessible sur **http://localhost:8080** (ou le port configuré dans `WEBAPP_PORT`).
+
+Au 1er démarrage de l'API :
+- La base SQLite est créée dans le volume `USERS_DATABASE_DIRECTORY`
 - L'utilisateur admin est créé automatiquement (depuis `ADMIN_USERNAME`/`ADMIN_PASSWORD`)
 
 Vérification :
@@ -170,9 +116,106 @@ curl http://localhost:8000/health
 # → {"status":"healthy","message":"API is running"}
 ```
 
-### 4.2 Démarrer le frontend
+---
+
+## 3. Développement local (Windows, sans Docker)
+
+> Cette section est destinée au développement sous Windows. En production, utiliser Docker (section 2).
+
+### 3.1 Environnement virtuel Python
 
 ```bash
+# Depuis la racine du projet
+python -m venv .venv
+
+# Activation (Windows PowerShell)
+.\.venv\Scripts\Activate.ps1
+```
+
+### 3.2 Installer les bibliothèques locales
+
+Les bibliothèques locales `dibisoreporting` et `dibisoplot` contiennent des fonctionnalités
+non encore publiées sur PyPI. Les installer en mode développement depuis les sources :
+
+```bash
+pip install -e dibisoreporting/ -e dibisoplot/
+```
+
+> ⚠️ **Ne pas** faire `pip install dibisoreporting` (version PyPI potentiellement obsolète).
+
+### 3.3 Installer les dépendances de l'API
+
+```bash
+pip install -r dibiso-reporting-api/requirements.txt
+```
+
+### 3.4 Installer les dépendances du frontend
+
+```bash
+cd dibiso-reporting-webapp
+npm install
+cd ..
+```
+
+### 3.5 Configuration `.env`
+
+**API** — `dibiso-reporting-api/.env` (copier depuis `.env.template`) :
+
+```dotenv
+USERS_DATABASE_NAME=users.db
+USERS_DATABASE_DIRECTORY=./api_data
+
+ADMIN_USERNAME=hb.admin
+ADMIN_PASSWORD=hb__2026
+SECRET_KEY=<générer avec: python -c "import secrets; print(secrets.token_hex(64))">
+
+# Templates HTML — pointer vers le DOSSIER PARENT de dibiso-html/
+HTML_TEMPLATE_PATH=C:/path/to/dibisoreports/dibiso-html-templates
+HTML_TEMPLATE_URL=https://github.com/dibiso-upsaclay/dibiso-html-templates/releases/latest
+
+OPENALEX_ANALYSIS_CACHE_PATH=C:/path/to/openalex-analysis/data
+DATA_FETCHING_TIMEOUT_SECONDS=1200
+
+SCANR_API_PASSWORD=<mot_de_passe>
+SCANR_API_URL=cluster-production.elasticsearch.dataesr.ovh
+SCANR_API_USERNAME=paris-saclay
+SCANR_BSO_INDEX=bso-publications
+SCANR_PUBLICATIONS_INDEX=scanr-publications
+
+OPENALEX_API_KEY=<clé_api>
+OPENALEX_EMAIL=<email>
+
+CORS_ALLOW_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+CORS_ALLOW_CREDENTIALS=true
+CORS_ALLOW_METHODS=*
+CORS_ALLOW_HEADERS=*
+
+THREAD_POOL_MAX_WORKERS=4
+ACCESS_TOKEN_EXPIRE_HOURS=48
+PROJECTS_PERSISTENCE_TIME_HOURS=4
+PROJECTS_ANALYSES_RETENTION_DAYS=30
+```
+
+> **Attention aux chemins Windows** : utiliser des slashes (`/`) ou des doubles
+> anti-slashes (`\\`). Les anti-slashes simples (`\`) provoquent des erreurs
+> `SyntaxError: unicode escape` dans le sous-processus Python.
+
+**Frontend** — `dibiso-reporting-webapp/.env` :
+
+```dotenv
+VITE_API_URL=http://127.0.0.1:8000
+```
+
+### 3.6 Démarrer les services
+
+```powershell
+# API — depuis dibiso-reporting-api/ (important : ne pas lancer depuis la racine)
+cd dibiso-reporting-api
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+```bash
+# Frontend
 cd dibiso-reporting-webapp
 npm run dev
 ```
@@ -181,13 +224,13 @@ L'interface est accessible sur **http://localhost:3000**.
 
 ---
 
-## 5. Génération d'un rapport BiSO — exemple LGI 2024
+## 4. Génération d'un rapport BiSO — exemple LGI 2024
 
-### 5.1 Se connecter
+### 4.1 Se connecter
 
-Ouvrir http://localhost:3000 → cliquer **Login** → saisir les identifiants admin.
+Ouvrir l'interface → cliquer **Login** → saisir les identifiants admin.
 
-### 5.2 Remplir le formulaire
+### 4.2 Remplir le formulaire
 
 | Champ | Valeur (exemple LGI) |
 |-------|---------------------|
@@ -200,11 +243,7 @@ Ouvrir http://localhost:3000 → cliquer **Login** → saisir les identifiants a
 > Le champ **Collection HAL** est l'identifiant utilisé dans l'URL HAL :
 > `https://hal.science/search/index/?q=*&collCode_s=LGI`
 
-### 5.3 Lancer la génération
-
-Cliquer **Generate Report**. L'interface affiche une barre de progression.
-
-### 5.4 Déroulement du processus
+### 4.3 Déroulement du processus
 
 ```
 1. Vérification de la collection HAL  (2%)
@@ -220,7 +259,7 @@ Cliquer **Generate Report**. L'interface affiche une barre de progression.
 8. Terminé                            (100%)
 ```
 
-### 5.5 Durée estimée
+### 4.4 Durée estimée
 
 | Situation | Durée approximative |
 |-----------|-------------------|
@@ -228,17 +267,14 @@ Cliquer **Generate Report**. L'interface affiche une barre de progression.
 | Exécutions suivantes (cache OpenAlex) | ~2–3 min |
 | Labo avec > 500 publications | 15–40 min (1ère exécution) |
 
-> Le cache OpenAlex est stocké dans `OPENALEX_ANALYSIS_CACHE_PATH`.
-> Une fois les données téléchargées, les exécutions suivantes sont beaucoup plus rapides.
-
-### 5.6 Télécharger les résultats
+### 4.5 Télécharger les résultats
 
 Après complétion :
 - **Download PDF** — rapport principal
 - **Download Biblio PDF** — bibliographie
-- **Download ZIP** — projet complet (figures SVG + HTML + données)
+- **Download ZIP** — projet complet (figures SVG + HTML rendu + données)
 
-### 5.7 Éditer le rapport (facultatif)
+### 4.6 Éditer le rapport (facultatif)
 
 Cliquer **Edit Report** pour accéder à l'éditeur Markdown :
 - Chaque section affiche la figure correspondante
@@ -247,10 +283,10 @@ Cliquer **Edit Report** pour accéder à l'éditeur Markdown :
 
 ---
 
-## 6. Bugs corrigés lors de la mise en place
+## 5. Bugs Windows corrigés lors de la mise en place
 
 Les bugs suivants ont été identifiés et corrigés pour faire fonctionner l'application
-en développement local sous Windows :
+en développement local sous Windows. Ils ne se produisent pas en production Docker.
 
 ### Bug 1 — Chemins Linux dans `.env` (erreur au démarrage)
 
@@ -260,32 +296,11 @@ en développement local sous Windows :
 
 **Correction** :
 ```dotenv
-# Avant
-USERS_DATABASE_DIRECTORY=/api_data
-OPENALEX_ANALYSIS_CACHE_PATH=/tmp/openalex-analysis-cache
-
-# Après
 USERS_DATABASE_DIRECTORY=./api_data
 OPENALEX_ANALYSIS_CACHE_PATH=C:/Users/<username>/AppData/Local/Temp/openalex-analysis-cache
 ```
 
-### Bug 2 — Variable `latex_compilation_processes` non définie
-
-**Symptôme** : `NameError: name 'latex_compilation_processes' is not defined`
-(lors d'une annulation de compilation)
-
-**Cause** : La variable est référencée dans `run_latex_compile_command` et
-`cancel_compilation` mais jamais déclarée.
-
-**Correction** dans `app/main.py` :
-```python
-# Ajouter avec data_fetching_processes
-data_fetching_processes: Dict[str, subprocess.Popen] = {}
-latex_compilation_processes: Dict[str, subprocess.Popen] = {}
-process_lock = threading.Lock()
-```
-
-### Bug 3 — Anti-slashes Windows dans le sous-processus Python
+### Bug 2 — Anti-slashes Windows dans le sous-processus Python
 
 **Symptôme** :
 ```
@@ -300,15 +315,11 @@ comme une séquence Unicode.
 **Correction** dans `app/main.py` — utiliser `json.dumps()` pour échapper les chemins :
 ```python
 import json as _json
-_cwd = _json.dumps(os.getcwd())          # "C:\\Users\\<username>\\..."
+_cwd = _json.dumps(os.getcwd())
 _project_dir = _json.dumps(str(project_dir))
-
-# Dans la f-string du sous-processus :
-sys.path.insert(0, {_cwd})              # les guillemets sont inclus par json.dumps
-root_path={_project_dir},
 ```
 
-### Bug 4 — Version PyPI de `dibisoreporting` obsolète
+### Bug 3 — Version PyPI de `dibisoreporting` obsolète
 
 **Symptôme** :
 ```
@@ -316,55 +327,37 @@ TypeError: Biso.__init__() got an unexpected keyword argument 'html_template_url
 AttributeError: type object 'DibisoReporting' has no attribute 'render_from_saved'
 ```
 
-**Cause** : La version installée depuis PyPI (v0.8) ne contient pas le support des
-templates HTML ni la méthode `render_from_saved`. La version locale dans le workspace
-est plus récente.
-
 **Correction** :
 ```bash
 pip install -e dibisoreporting/ -e dibisoplot/
 ```
 
-### Bug 5 — Kaleido 0.2.1 ne répond plus sous Windows (blocage complet)
+### Bug 4 — Kaleido 0.2.1 bloque sous Windows
 
-**Symptôme** : Le sous-processus de génération de rapport se bloque indéfiniment (>30 min)
-sans produire de sorties, après la phase de récupération des données.
+**Symptôme** : Le sous-processus se bloque indéfiniment après la récupération des données.
 
-**Cause** : `kaleido 0.2.1` (version installée par défaut via PyPI) utilise un sous-processus
-Node.js pour exporter les figures Plotly en SVG. Ce mécanisme est connu pour bloquer
-définitivement sur Windows.
+**Cause** : `kaleido 0.2.1` utilise un sous-processus Node.js qui bloque définitivement sur Windows.
 
 **Correction** :
 ```bash
 pip install "kaleido>=1.0.0"
 ```
 
-Le fichier `requirements.txt` a été mis à jour pour inclure cette contrainte.
+> Note : `openalex-analysis` déclare `kaleido<1.0` comme dépendance mais ne l'utilise
+> pas activement ici. Le conflit peut être ignoré.
 
-> Note : `openalex-analysis 0.15.2` déclare `kaleido<1.0` comme dépendance mais
-> n'utilise kaleido que pour ses propres graphiques (non utilisés ici). Le conflit
-> peut être ignoré sans impact fonctionnel.
-
-### Bug 6 — Timeout trop court pour la récupération des données
+### Bug 5 — Timeout trop court pour la récupération des données
 
 **Symptôme** : `Process timeout - data fetching took too long` après 5 minutes.
 
-**Cause** : Le timeout du sous-processus était codé en dur à 300 secondes (5 min),
-insuffisant pour la 1ère exécution avec appels API HAL + OpenAlex + ScanR.
-
-**Correction** dans `.env` et `app/main.py` :
+**Correction** dans `.env` :
 ```dotenv
 DATA_FETCHING_TIMEOUT_SECONDS=1200
 ```
 
-### Bug 7 — Dossier `.git` inclus dans le ZIP généré
+### Bug 6 — Dossier `.git` inclus dans le ZIP généré
 
-**Symptôme** : Le ZIP de téléchargement contient des fichiers `.git/...` (artefacts du dépôt git
-du template HTML).
-
-**Cause** : `get_html_template_from_path()` copie le CONTENU du répertoire `HTML_TEMPLATE_PATH`
-(ici `dibiso-html-templates/`) dans le répertoire de projet temporaire. Ce répertoire est un
-dépôt git, donc son dossier `.git/` est aussi copié.
+**Symptôme** : Le ZIP contient des fichiers `.git/...` du template HTML.
 
 **Correction** dans `dibisoreporting/dibisoreporting/dibisoreporting.py` :
 ```python
@@ -372,35 +365,27 @@ _skip = {".git", ".hg", ".svn", "__pycache__"}
 for item in os.listdir(self.html_template_path):
     if item in _skip:
         continue
-    ...
 ```
 
 ### Limitation — PDF non disponible sous Windows (GTK manquant)
 
-**Symptôme** : `status=partial` au lieu de `status=completed`. Pas de bouton "Download PDF".
+**Symptôme** : `status=partial`. Pas de bouton "Download PDF".
 
-**Cause** : WeasyPrint (conversion HTML → PDF) nécessite les bibliothèques GTK3 (`libgobject-2.0-0`,
-`libpango-1.0-0`, `libcairo-2`) qui ne sont pas disponibles sur Windows par défaut.
+**Cause** : WeasyPrint nécessite les bibliothèques GTK3 non disponibles sur Windows par défaut.
 
-**En développement Windows** : le statut `partial` est attendu. Les fichiers disponibles sont :
-- ZIP (figures SVG + HTML rendu + données JSON)
-- HTML (rapport rendu par Jinja2, téléchargeable via `/download-html`)
+**En développement Windows** : le statut `partial` est attendu. Télécharger le ZIP
+et ouvrir `report.html` dans un navigateur.
 
-**En production (Docker/Linux)** : PDF généré normalement.
-
-**Pour activer le PDF sur Windows** : installer le runtime GTK3 pour Windows :
+**Pour activer le PDF sur Windows** :
 ```powershell
-# Option 1 : Via Chocolatey (nécessite droits admin)
+# Via Chocolatey (nécessite droits admin)
 choco install gtk-runtime -y
-
-# Option 2 : Télécharger manuellement depuis
-# https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer/releases
-# puis ajouter C:\Program Files\GTK3-Runtime Win64\bin\ au PATH
+# Puis ajouter C:\Program Files\GTK3-Runtime Win64\bin\ au PATH
 ```
 
 ---
 
-## 7. Architecture du flux de génération
+## 6. Architecture du flux de génération
 
 ```
 Utilisateur (navigateur)
@@ -411,7 +396,7 @@ FastAPI (app/main.py)
     ▼
 run_compilation()
     ├── Vérification HAL (requests)
-    └── your_latex_project_generator()
+    └── generate_report_project()
             │  subprocess.Popen(python -c "...")
             ▼
         Sous-processus isolé :
@@ -438,11 +423,3 @@ create_zip_archive() → project.zip
 GET /download-pdf  (authentifié)
 GET /download-zip  (authentifié)
 ```
-
----
-
-## 8. Notes pour la production (Docker)
-
-En production Docker, les chemins Linux (`/api_data`, `/tmp/...`) sont corrects.
-Les variables `HTML_TEMPLATE_PATH` et `OPENALEX_ANALYSIS_CACHE_PATH` doivent
-pointer vers des volumes montés. Voir `docker-compose.yml`.
