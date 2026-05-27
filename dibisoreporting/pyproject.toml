@@ -31,7 +31,7 @@ dependencies = [
 requires-python = ">=3.10"
 
 [tool.setuptools]
-packages = ["dibisoreporting", "dibisoreporting.biso"]
+packages = ["dibisoreporting", "dibisoreporting.biso", "dibisoreporting.pubpart"]
 
 [tool.setuptools.dynamic]
 version = { attr = "dibisoreporting._version.__version__" }

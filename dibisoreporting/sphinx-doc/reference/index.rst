@@ -19,12 +19,9 @@ DibisoReporting
 
    DibisoReporting
    DibisoReporting.__init__
-   DibisoReporting.add_marco
-   DibisoReporting.get_file_from_path
-   DibisoReporting.get_file_from_url
-   DibisoReporting.create_default_latexmkrc_file
-   DibisoReporting.get_latex_template_from_path
-   DibisoReporting.get_latex_template_from_github
+   DibisoReporting.get_html_template_from_path
+   DibisoReporting.get_html_template_from_github
+   DibisoReporting.render_from_saved
    DibisoReporting.generate_report
 
 

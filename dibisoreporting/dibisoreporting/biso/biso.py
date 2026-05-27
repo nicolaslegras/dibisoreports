@@ -155,30 +155,10 @@ class Biso(DibisoReporting):
         :type entity_acronym: str
         :param entity_full_name: The full name of the entity.
         :type entity_full_name: str
-        :param latex_main_file_path: Path to a single LaTeX main file. This file is the one to use to compile the
-            report. It will copy the main file to root_path. Default to None. If None, doesn't try getting the main file
-            from the path. If both latex_main_file_path and latex_main_file_url are not None, the library will first try
-            to get the main file from the path.
-        :type latex_main_file_path: str | None, optional
-        :param latex_main_file_url: URL to download a single LaTeX main file. It will download the file directly
-            to root_path. Default to None. If None, doesn't try getting the main file from the URL.
-        :type latex_main_file_url: str | None, optional
-        :param latex_biblio_file_path: Path to a single LaTeX biblio file. This file is the one to use to compile the
-            bibliography. It will copy the biblio file to root_path. Default to None. If None, doesn't try getting the
-            biblio file from the path. If both latex_biblio_file_path and latex_biblio_file_url are not None, the
-            library will first try to get the biblio file from the path.
-        :type latex_biblio_file_path: str | None, optional
-        :param latex_biblio_file_url: URL to download a single LaTeX biblio file. It will download the file directly
-            to root_path. Default to None. If None, doesn't try getting the biblio file from the URL.
-        :type latex_biblio_file_url: str | None, optional
-        :param latex_template_path: Path to the LaTeX template files. It will copy the templates files to root_path.
-            Default to None. If None, doesn't try getting the template from the path. If both latex_template_path and
-            latex_template_url are not None, the library will first try to get the template from the path.
-        :type latex_template_path: str | None, optional
-        :param latex_template_url: URL to a GitHub repository containing the template. It will get the latest repository
-            release and extract it to get the template files. Default to None. If None, doesn't try getting the template
-            from the URL.
-        :type latex_template_url: str | None, optional
+        :param html_template_path: Local path to the HTML template directory (parent of dibiso-html/).
+        :type html_template_path: str | None, optional
+        :param html_template_url: GitHub release URL to download the HTML template ZIP.
+        :type html_template_url: str | None, optional
         :param max_entities: Default maximum number of entities used to create the plot. Default 1000.
             Set to None to disable the limit. This value limits the number of queried entities when doing analysis.
             For example, when creating the collaboration map, it limits the number of works to query from HAL to extract the

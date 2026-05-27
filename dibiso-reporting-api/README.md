@@ -5,13 +5,13 @@ A Python API for generating bibliometric reports, developed at the DiBISO.
 Features:
 
   - Select year, HAL collection ID, fill-in laboratory name and acronym
-  - Loading bar, cancel button, download PDF and LaTeX ZIP project
+  - Loading bar, cancel button, download PDF, HTML, and ZIP project
   - Create and manage users
 
 Requirements:
 
-  - Needs LaTeX (LuaTeX) to compile documents
   - Written in Python using FastAPI
+  - PDF export requires WeasyPrint (GTK3 runtime on Windows; included in Docker image)
 
 License: GPL 3.0
 

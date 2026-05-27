@@ -8,8 +8,6 @@ from dibisoplot.pubpart import WorksCollaborations
 
 from dibisoreporting import DibisoReporting
 
-from dibisoreporting.utils import escape_for_latex
-
 from dibisoplot._version import __version__ as dibisoplot_version
 from dibisoreporting._version import __version__ as dibisoreporting_version
 
@@ -62,12 +60,8 @@ class PubPart(DibisoReporting):
             secondary_entity_filter_field: str | list[str] | None = "authorships.institutions.lineage",
             entities_acronym: str = "",
             entities_full_name: str = "",
-            latex_main_file_path: str | None = None,
-            latex_main_file_url: str | None = None,
-            latex_biblio_file_path: str | None = None,
-            latex_biblio_file_url: str | None = None,
-            latex_template_path: str | None = None,
-            latex_template_url: str | None = None,
+            html_template_path: str | None = None,
+            html_template_url: str | None = None,
             max_entities: int | None = 100000,
             max_plotted_entities: int = 25,
             plot_main_color: str | None = None,
@@ -78,9 +72,9 @@ class PubPart(DibisoReporting):
         """
         Initialize the PubPart class with the given parameters.
 
-        :param entity_id: The HAL collection identifier. This usually refers to the entity acronym.
+        :param entity_id: The OpenAlex institution ID for the primary entity.
         :type entity_id: str
-        :param year: The year for which to fetch data. If None, uses the current year.
+        :param year: The year (or year range, e.g. "2024-2025") for which to fetch data. If None, uses current year.
         :type year: int | str | None, optional
         :param entity_openalex_filter_field: Field to filter on in the OpenAlex API.
             Default to 'authorships.institutions.lineage'.
@@ -97,38 +91,16 @@ class PubPart(DibisoReporting):
         :type entities_acronym: str
         :param entities_full_name: The full name of the entities.
         :type entities_full_name: str
-        :param latex_main_file_path: Path to a single LaTeX main file. This file is the one to use to compile the
-            report. It will copy the main file to root_path. Default to None. If None, doesn't try getting the main file
-            from the path. If both latex_main_file_path and latex_main_file_url are not None, the library will first try
-            to get the main file from the path.
-        :type latex_main_file_path: str | None, optional
-        :param latex_main_file_url: URL to download a single LaTeX main file. It will download the file directly
-            to root_path. Default to None. If None, doesn't try getting the main file from the URL.
-        :type latex_main_file_url: str | None, optional
-        :param latex_biblio_file_path: Path to a single LaTeX biblio file. This file is the one to use to compile the
-            bibliography. It will copy the biblio file to root_path. Default to None. If None, doesn't try getting the
-            biblio file from the path. If both latex_biblio_file_path and latex_biblio_file_url are not None, the
-            library will first try to get the biblio file from the path.
-        :type latex_biblio_file_path: str | None, optional
-        :param latex_biblio_file_url: URL to download a single LaTeX biblio file. It will download the file directly
-            to root_path. Default to None. If None, doesn't try getting the biblio file from the URL.
-        :type latex_biblio_file_url: str | None, optional
-        :param latex_template_path: Path to the LaTeX template files. It will copy the templates files to root_path.
-            Default to None. If None, doesn't try getting the template from the path. If both latex_template_path and
-            latex_template_url are not None, the library will first try to get the template from the path.
-        :type latex_template_path: str | None, optional
-        :param latex_template_url: URL to a GitHub repository containing the template. It will get the latest repository
-            release and extract it to get the template files. Default to None. If None, doesn't try getting the template
-            from the URL.
-        :type latex_template_url: str | None, optional
-        :param max_entities: Default maximum number of entities used to create the plot. Default 1000.
-            Set to None to disable the limit. This value limits the number of queried entities when doing analysis.
-            For example, when creating the collaboration map, it limits the number of works to query from HAL to extract the
-            collaborating institutions from.
+        :param html_template_path: Local path to the HTML template directory (parent of dibiso-html/).
+        :type html_template_path: str | None, optional
+        :param html_template_url: GitHub release URL to download the HTML template ZIP.
+        :type html_template_url: str | None, optional
+        :param max_entities: Default maximum number of entities used to create the plot. Default 100000.
+            Set to None to disable the limit.
         :type max_entities: int | None, optional
         :param max_plotted_entities: Maximum number of bars in the plot or rows in the table. Default to 25.
         :type max_plotted_entities: int, optional
-        :param plot_main_color: Main color used in the plots. Default to "blue". Plotly color.
+        :param plot_main_color: Main color used in the plots. Plotly color string.
         :type plot_main_color: str, optional
         :param root_path: Path to the root directory where the report and figures will be generated.
         :type root_path: str
@@ -139,16 +111,12 @@ class PubPart(DibisoReporting):
         super().__init__(
             entity_id,
             year,
-            latex_main_file_path=latex_main_file_path,
-            latex_main_file_url=latex_main_file_url,
-            latex_biblio_file_path=latex_biblio_file_path,
-            latex_biblio_file_url=latex_biblio_file_url,
-            latex_template_path=latex_template_path,
-            latex_template_url=latex_template_url,
+            html_template_path=html_template_path,
+            html_template_url=html_template_url,
             max_entities=max_entities,
             max_plotted_entities=max_plotted_entities,
             plot_main_color=plot_main_color,
-            root_path = root_path
+            root_path=root_path,
         )
 
         self.entity_openalex_filter_field = entity_openalex_filter_field
@@ -204,8 +172,6 @@ class PubPart(DibisoReporting):
         :type import_default_visualizations: bool
         """
 
-        # TODO: check that the IDs exist
-
         # create a copy to modify the default visualizations to set entity_openalex_filter_field,
         # secondary_entity_id and secondary_entity_filter_field
         self.default_visualizations = copy.deepcopy(PubPart.default_visualizations)
@@ -215,15 +181,14 @@ class PubPart(DibisoReporting):
                 viz["secondary_entity_id"] = self.secondary_entity_id
                 viz["secondary_entity_filter_field"] = self.secondary_entity_filter_field
 
-        self.add_marco("reportyear", escape_for_latex(str(self.year)))
-        self.add_marco("entitiesacronym", escape_for_latex(self.entities_acronym))
-        self.add_marco("entitiesfullname", escape_for_latex(self.entities_full_name))
-        self.add_marco("datafetchdate", escape_for_latex(self.data_fetch_date))
-        self.add_marco("watermarktext", escape_for_latex(self.watermark_text))
-        self.macros.append("")
-        self.add_marco("dibisoplotversion", escape_for_latex(dibisoplot_version))
-        self.add_marco("dibisoreportingversion", escape_for_latex(dibisoreporting_version))
-        self.macros.append("")
+        self.macros_variables["report_type"] = "pubpart"
+        self.macros_variables["reportyear"] = str(self.year)
+        self.macros_variables["entitiesacronym"] = self.entities_acronym
+        self.macros_variables["entitiesfullname"] = self.entities_full_name
+        self.macros_variables["datafetchdate"] = self.data_fetch_date
+        self.macros_variables["watermarktext"] = self.watermark_text
+        self.macros_variables["dibisoplotversion"] = dibisoplot_version
+        self.macros_variables["dibisoreportingversion"] = dibisoreporting_version
 
         super().generate_report(visualizations_to_make, import_default_visualizations)
 

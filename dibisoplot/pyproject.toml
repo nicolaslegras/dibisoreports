@@ -36,7 +36,7 @@ dependencies = [
 requires-python = ">=3.10"
 
 [tool.setuptools]
-packages = ["dibisoplot", "dibisoplot.biso"]
+packages = ["dibisoplot", "dibisoplot.biso", "dibisoplot.pubpart"]
 
 [tool.setuptools.dynamic]
 version = { attr = "dibisoplot._version.__version__" }
