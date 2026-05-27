@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+title: dibisoplot
+doi: 10.5281/zenodo.17251536
+type: software
+authors:
+  - given-names: 'Romain, François'
+    family-names: Thomas
+    email: contact@romainthomas.net
+    affiliation: Université Paris-Saclay
+    orcid: 'https://orcid.org/0009-0008-9900-1930'
+repository-code: 'https://github.com/dibiso-upsaclay/dibisoplot'
+abstract: >-
+  A Python library for plotting bibliometric research data, 
+  developed at the DiBISO.
+keywords:
+  - Python
+  - Data analysis
+  - Scientific research
