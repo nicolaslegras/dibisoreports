@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Archive, CheckCircle, Download, FileText, Github, Loader2, XCircle, Lock, UserPlus, LogIn, User, LogOut, Settings, ArrowLeft, Eye, Edit3 } from 'lucide-react';
-import { marked } from 'marked';
+import { Archive, CheckCircle, Download, FileText, Github, Loader2, XCircle, Lock, UserPlus, LogIn, User, LogOut, Settings, ArrowLeft } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL
 
@@ -23,7 +22,9 @@ const ReportGeneratorInterface = () => {
     entityAcronym: '',
     entityFullName: '',
     entityId: '',
-    maxEntities: 1000
+    maxEntities: 1000,
+    reporter: '',
+    reporterEmail: ''
   });
   // Form state for login and registration
   const [loginData, setLoginData] = useState({
@@ -36,6 +37,9 @@ const ReportGeneratorInterface = () => {
     password: ''
   });
   const [showLogin, setShowLogin] = useState(false);
+  const [showAccount, setShowAccount] = useState(false);
+  const [profileData, setProfileData] = useState({ firstName: '', lastName: '', email: '' });
+  const [profileSaveSuccess, setProfileSaveSuccess] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
@@ -56,11 +60,10 @@ const ReportGeneratorInterface = () => {
   const [editMode, setEditMode] = useState(false);
   const [sections, setSections] = useState([]);
   const [analyses, setAnalyses] = useState({});
-  const [savingStatus, setSavingStatus] = useState({});
-  const [showPreview, setShowPreview] = useState({});
   const [isExporting, setIsExporting] = useState(false);
-  const [exportStatus, setExportStatus] = useState(null);
-  const saveTimers = useRef({});
+
+  const [reportPreviewHtml, setReportPreviewHtml] = useState('');
+  const iframeRef = useRef(null);
 
   // Effect to check authentication status when the component mounts
   useEffect(() => {
@@ -76,6 +79,7 @@ const ReportGeneratorInterface = () => {
             const userData = await response.json();
             setIsAuthenticated(true);
             setCurrentUser(userData);
+            fetchProfile();
             if (userData.role === 'admin') {
               fetchUsers();
             }
@@ -113,6 +117,28 @@ const ReportGeneratorInterface = () => {
       }
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  const fetchProfile = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/me/profile`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const profile = await response.json();
+        const firstName = profile.first_name || '';
+        const lastName = profile.last_name || '';
+        const email = profile.email || '';
+        setProfileData({ firstName, lastName, email });
+        setFormData(prev => ({
+          ...prev,
+          reporter: prev.reporter || [firstName, lastName].filter(Boolean).join(' '),
+          reporterEmail: prev.reporterEmail || email,
+        }));
+      }
+    } catch (err) {
+      console.error('Error fetching profile:', err);
     }
   };
 
@@ -201,6 +227,39 @@ const ReportGeneratorInterface = () => {
     }
   };
 
+  const handleProfileSave = async (e) => {
+    e.preventDefault();
+    setAuthError(null);
+    setProfileSaveSuccess(false);
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/me/profile`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          first_name: profileData.firstName || null,
+          last_name: profileData.lastName || null,
+          email: profileData.email || null,
+        })
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to save profile');
+      }
+      setProfileSaveSuccess(true);
+      const fullName = [profileData.firstName, profileData.lastName].filter(Boolean).join(' ');
+      setFormData(prev => ({
+        ...prev,
+        reporter: fullName,
+        reporterEmail: profileData.email || '',
+      }));
+    } catch (err) {
+      setAuthError(err.message || 'Profile save failed');
+    }
+  };
+
   const validateForm = () => {
     const { year, entityAcronym, entityFullName, entityId, maxEntities } = formData;
     if (!year || !entityAcronym || !entityFullName || !entityId || !maxEntities) {
@@ -246,6 +305,7 @@ const ReportGeneratorInterface = () => {
         const userData = await userResponse.json();
         setCurrentUser(userData);
         setIsAuthenticated(true);
+        fetchProfile();
         setShowLogin(false);
       } else {
         throw new Error('Failed to fetch user data');
@@ -452,7 +512,6 @@ const ReportGeneratorInterface = () => {
             const result = await resultResponse.json();
             setCompilationResult({ ...result, status: 'partial' });
           } else {
-            // If result endpoint fails, create a minimal result object for partial success
             setCompilationResult({
               status: 'partial',
               message: 'Data fetching completed successfully, but PDF compilation failed or timed out. ZIP archive is available for download.',
@@ -462,7 +521,6 @@ const ReportGeneratorInterface = () => {
             });
           }
         } catch (err) {
-          // If result endpoint is not accessible, create a minimal result object
           setCompilationResult({
             status: 'partial',
             message: 'Data fetching completed successfully, but PDF compilation failed or timed out. ZIP archive is available for download.',
@@ -470,6 +528,18 @@ const ReportGeneratorInterface = () => {
             zip_available: true,
             pdf_available: false
           });
+        }
+        // Figures and data are available even in partial mode — enter edit mode
+        try {
+          const [secRes, anaRes] = await Promise.all([
+            fetch(`${API_BASE_URL}/report-sections/${compId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
+            fetch(`${API_BASE_URL}/analyses/${compId}`,         { headers: { 'Authorization': `Bearer ${token}` } }),
+          ]);
+          if (secRes.ok) setSections(await secRes.json());
+          if (anaRes.ok) setAnalyses(await anaRes.json());
+          setEditMode(true);
+        } catch (e) {
+          console.error('Failed to load sections/analyses for partial report:', e);
         }
         setCompilationStatus(null);
       } else if (status.status === 'failed') {
@@ -514,7 +584,9 @@ const ReportGeneratorInterface = () => {
           entity_acronym: formData.entityAcronym,
           entity_full_name: formData.entityFullName,
           entity_id: formData.entityId,
-          max_entities: formData.maxEntities
+          max_entities: formData.maxEntities,
+          reporter: formData.reporter,
+          reporter_email: formData.reporterEmail
         })
       });
       if (!response.ok) {
@@ -532,65 +604,208 @@ const ReportGeneratorInterface = () => {
     }
   };
 
-  // ── Edit Report handlers ──────────────────────────────────────────────
+  // ── Edit Report: build iframe srcdoc with inline editors ─────────────
 
-  const handleAnalysisChange = (sectionId, value) => {
-    setAnalyses(prev => ({ ...prev, [sectionId]: value }));
-    setSavingStatus(prev => ({ ...prev, [sectionId]: 'saving' }));
-    clearTimeout(saveTimers.current[sectionId]);
-    saveTimers.current[sectionId] = setTimeout(async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/analyses/${compilationId}/${sectionId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ content: value }),
-        });
-        setSavingStatus(prev => ({ ...prev, [sectionId]: res.ok ? 'saved' : 'error' }));
-      } catch {
-        setSavingStatus(prev => ({ ...prev, [sectionId]: 'error' }));
-      }
-    }, 1000);
-  };
+  function buildEditorHtml(rawHtml, currentAnalyses, apiBase) {
+    // Asset images (logos) can use absolute API URLs — they don't have CORS issues for <img>
+    let html = rawHtml
+      .replace(/src="assets\//g, `src="${apiBase}/template-assets/assets/`);
 
-  const handleExport = async () => {
-    setIsExporting(true);
-    setExportStatus({ message: 'Rendering report...' });
-    try {
-      const res = await fetch(`${API_BASE_URL}/export/${compilationId}`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(await res.text());
-      pollExportStatus();
-    } catch (e) {
-      setExportStatus({ message: `Export failed: ${e.message}` });
-      setIsExporting(false);
+    const editorScript = `
+<script>
+(function() {
+  var analyses = ${JSON.stringify(currentAnalyses)};
+
+  function buildEditor(sectionId, currentValue) {
+    var wrapper = document.createElement('div');
+    wrapper.style.cssText = 'margin:18px 0;border:2px dashed #3b82f6;border-radius:6px;padding:14px 16px;background:#eff6ff;';
+
+    var hdr = document.createElement('div');
+    hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;';
+
+    var lbl = document.createElement('span');
+    lbl.textContent = '✏️ Commentaire / analyse (Markdown)';
+    lbl.style.cssText = 'font-size:11px;font-weight:700;color:#1d4ed8;text-transform:uppercase;letter-spacing:.05em;';
+
+    var status = document.createElement('span');
+    status.style.cssText = 'font-size:11px;color:#6b7280;';
+
+    hdr.appendChild(lbl);
+    hdr.appendChild(status);
+
+    var ta = document.createElement('textarea');
+    ta.value = currentValue;
+    ta.placeholder = 'Rédigez votre analyse ici (Markdown supporté)…';
+    ta.style.cssText = 'width:100%;min-height:100px;padding:8px 10px;border:1px solid #93c5fd;border-radius:4px;font-family:ui-monospace,monospace;font-size:13px;line-height:1.6;resize:vertical;box-sizing:border-box;color:#1e293b;background:#fff;';
+
+    var timer;
+    ta.addEventListener('input', function() {
+      status.textContent = 'Modification…';
+      clearTimeout(timer);
+      timer = setTimeout(function() {
+        window.parent.postMessage({ type: 'save_analysis', sectionId: sectionId, content: ta.value }, '*');
+        status.textContent = '✓ Sauvegardé';
+      }, 800);
+    });
+
+    wrapper.appendChild(hdr);
+    wrapper.appendChild(ta);
+    return wrapper;
+  }
+
+  document.querySelectorAll('section[id]').forEach(function(section) {
+    var sectionId = section.id.replace(/-/g, '_');
+    var editor = buildEditor(sectionId, analyses[sectionId] || '');
+
+    var existing = section.querySelector('.analysis');
+    if (existing) {
+      existing.replaceWith(editor);
+    } else {
+      var placeholder = section.querySelector('.dibiso-info');
+      if (placeholder) placeholder.replaceWith(editor);
+      else section.appendChild(editor);
     }
-  };
+  });
+})();
+<\/script>`;
 
-  const pollExportStatus = () => {
+    return html.replace('</body>', editorScript + '\n</body>');
+  }
+
+  // Fetch report HTML + inline CSS, then build iframe srcdoc
+  useEffect(() => {
+    if (!editMode || !compilationId) return;
+    setReportPreviewHtml('');
+
+    const build = async () => {
+      try {
+        // Fetch the rendered report HTML (requires auth)
+        const htmlRes = await fetch(
+          `${API_BASE_URL}/download-html?temp_id=${compilationId}&file_name=report`,
+          { headers: { 'Authorization': `Bearer ${token}` } }
+        );
+        if (!htmlRes.ok) throw new Error('HTML not available');
+        let html = await htmlRes.text();
+
+        // Inline CSS: sandboxed iframes treat <link> cross-origin fetches as blocked.
+        // Fetch each CSS file from React's origin and embed it as a <style> block.
+        const cssFiles = ['biso.css', 'base.css', 'print.css'];
+        for (const file of cssFiles) {
+          try {
+            const cssRes = await fetch(`${API_BASE_URL}/template-assets/css/${file}`);
+            if (cssRes.ok) {
+              const css = await cssRes.text();
+              html = html.replace(
+                new RegExp(`<link[^>]+href="css/${file}"[^>]*>`, 'g'),
+                `<style>\n${css}\n</style>`
+              );
+            }
+          } catch (_) { /* skip missing CSS */ }
+        }
+
+        setReportPreviewHtml(buildEditorHtml(html, analyses, API_BASE_URL));
+      } catch (_) {
+        setReportPreviewHtml(
+          '<body style="font-family:sans-serif;padding:2rem;color:#b91c1c"><h2>Report HTML not available.</h2></body>'
+        );
+      }
+    };
+
+    build();
+  }, [editMode, compilationId]); // intentionally omit analyses — editors init from snapshot, then self-manage
+
+  // Listen for save_analysis postMessages from the iframe
+  useEffect(() => {
+    if (!editMode) return;
+    const handler = (event) => {
+      if (event.data?.type !== 'save_analysis') return;
+      const { sectionId, content } = event.data;
+      setAnalyses(prev => ({ ...prev, [sectionId]: content }));
+      fetch(`${API_BASE_URL}/analyses/${compilationId}/${sectionId}`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      }).catch(err => console.error('Analysis save failed:', err));
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, [editMode, compilationId, token]);
+
+  // Poll export status after leaving edit mode so isExporting clears when done
+  useEffect(() => {
+    if (!isExporting || editMode || !compilationId) return;
+    let cancelled = false;
     const poll = async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/compilation-status/${compilationId}`, {
           headers: { 'Authorization': `Bearer ${token}` },
         });
-        if (!res.ok) { setIsExporting(false); return; }
-        const status = await res.json();
-        if (status.export_status === 'done') {
-          setIsExporting(false);
-          setExportStatus({ message: 'Report exported successfully!', pdf_url: status.export_pdf_url });
-        } else if (status.export_status === 'failed') {
-          setIsExporting(false);
-          setExportStatus({ message: 'Export failed. Please try again.' });
+        const s = await res.json();
+        if (s.export_status === 'done' || s.export_status === 'failed') {
+          if (!cancelled) setIsExporting(false);
         } else {
-          setTimeout(poll, 500);
+          if (!cancelled) setTimeout(poll, 1000);
         }
-      } catch { setIsExporting(false); }
+      } catch {
+        if (!cancelled) setIsExporting(false);
+      }
     };
-    setTimeout(poll, 500);
-  };
+    setTimeout(poll, 1000);
+    return () => { cancelled = true; };
+  }, [isExporting, editMode, compilationId]);
 
   // ─────────────────────────────────────────────────────────────────────
+
+  const handleExportZip = async () => {
+    if (!compilationId) return;
+    setIsExporting(true);
+    try {
+      // Check current export status before triggering a new export
+      const statusRes = await fetch(`${API_BASE_URL}/compilation-status/${compilationId}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      const currentStatus = await statusRes.json();
+
+      if (currentStatus.export_status !== 'done' && currentStatus.export_status !== 'rendering') {
+        const res = await fetch(`${API_BASE_URL}/export/${compilationId}`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error(await res.text());
+      }
+
+      if (currentStatus.export_status !== 'done') {
+        await new Promise((resolve, reject) => {
+          const poll = async () => {
+            try {
+              const sr = await fetch(`${API_BASE_URL}/compilation-status/${compilationId}`, {
+                headers: { 'Authorization': `Bearer ${token}` },
+              });
+              const s = await sr.json();
+              if (s.export_status === 'done') resolve(s);
+              else if (s.export_status === 'failed') reject(new Error("L'export a échoué"));
+              else setTimeout(poll, 800);
+            } catch (e) { reject(e); }
+          };
+          setTimeout(poll, 800);
+        });
+      }
+
+      const downloadId = compilationResult?.temp_id || compilationId;
+      const blob = await fetch(`${API_BASE_URL}/download-zip?temp_id=${downloadId}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      }).then(r => { if (!r.ok) throw new Error('Download failed'); return r.blob(); });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${formData.year}_${formData.entityAcronym}_export.zip`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      setError(`Export ZIP échoué : ${e.message}`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const handleDownload = async (type, fileName = null) => {
     if (!compilationResult) return;
@@ -659,98 +874,62 @@ const ReportGeneratorInterface = () => {
     }
   };
 
-  // ── Edit Report view ─────────────────────────────────────────────────
+  // ── Edit Report view — full-page iframe with inline editors ─────────
   if (editMode) {
     return (
-      <div className="min-h-screen bg-gray-950 text-white">
-        {/* Sticky header */}
-        <div className="sticky top-0 z-10 bg-gray-900 border-b border-gray-700 px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button onClick={() => setEditMode(false)}
-              className="text-gray-400 hover:text-white flex items-center gap-2 text-sm">
-              <ArrowLeft className="w-4 h-4" /> Back
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#030712' }}>
+        {/* Header bar */}
+        <div style={{ flexShrink: 0, background: '#111827', borderBottom: '1px solid #374151', padding: '10px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <button
+              onClick={() => { setEditMode(false); setReportPreviewHtml(''); }}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}
+            >
+              <ArrowLeft size={16} /> Back
             </button>
-            <h1 className="text-lg font-semibold">
-              Edit Report — {formData.entityAcronym} {formData.year}
-            </h1>
+            <span style={{ color: '#f9fafb', fontWeight: 600, fontSize: 15 }}>
+              {formData.entityAcronym} {formData.year} — Compléter le rapport
+            </span>
           </div>
-          <button onClick={handleExport} disabled={isExporting}
-            className="bg-teal-700 hover:bg-teal-800 disabled:bg-teal-500 text-white font-semibold py-2 px-5 rounded-lg transition duration-300 flex items-center gap-2 text-sm">
-            {isExporting ? <Loader2 className="animate-spin w-4 h-4" /> : <Download className="w-4 h-4" />}
-            {isExporting ? 'Exporting…' : 'Export PDF & HTML'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button
+              onClick={() => {
+                if (compilationId) {
+                  fetch(`${API_BASE_URL}/export/${compilationId}`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                  }).catch(() => {});
+                  setIsExporting(true);
+                }
+                setEditMode(false);
+                setReportPreviewHtml('');
+              }}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0d9488', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 16px', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}
+            >
+              <ArrowLeft size={14} /> Sauvegarder et revenir
+            </button>
+          </div>
         </div>
 
-        {/* Section cards */}
-        <div className="max-w-4xl mx-auto px-6 py-8 space-y-6 pb-24">
-          {sections.map(section => (
-            <div key={section.id} className="bg-gray-800 rounded-xl shadow-lg overflow-hidden">
-              {/* Card header */}
-              <div className="px-5 py-3 bg-gray-700 border-b border-gray-600 flex items-center justify-between">
-                <h2 className="text-base font-semibold">{section.label}</h2>
-                <span className="text-xs text-gray-400">
-                  {savingStatus[section.id] === 'saving' && 'Saving…'}
-                  {savingStatus[section.id] === 'saved'  && '✓ Saved'}
-                  {savingStatus[section.id] === 'error'  && '⚠ Save failed'}
-                </span>
-              </div>
-
-              {/* Figure preview */}
-              {section.has_figure && (
-                <div className="px-5 py-3 border-b border-gray-600 bg-gray-750">
-                  <img
-                    src={`${API_BASE_URL}/figures/${compilationId}/${section.id}`}
-                    alt={section.label}
-                    className="max-w-full rounded max-h-64 object-contain"
-                    onError={e => { e.target.style.display = 'none'; }}
-                  />
-                </div>
-              )}
-
-              {/* Editor */}
-              <div className="px-5 py-4">
-                <div className="flex gap-2 mb-3">
-                  <button onClick={() => setShowPreview(p => ({ ...p, [section.id]: false }))}
-                    className={`text-xs px-3 py-1 rounded flex items-center gap-1 ${!showPreview[section.id] ? 'bg-teal-700 text-white' : 'bg-gray-600 text-gray-300'}`}>
-                    <Edit3 className="w-3 h-3" /> Edit
-                  </button>
-                  <button onClick={() => setShowPreview(p => ({ ...p, [section.id]: true }))}
-                    className={`text-xs px-3 py-1 rounded flex items-center gap-1 ${showPreview[section.id] ? 'bg-teal-700 text-white' : 'bg-gray-600 text-gray-300'}`}>
-                    <Eye className="w-3 h-3" /> Preview
-                  </button>
-                </div>
-
-                {!showPreview[section.id] ? (
-                  <textarea
-                    value={analyses[section.id] || ''}
-                    onChange={e => handleAnalysisChange(section.id, e.target.value)}
-                    placeholder={`Analysis for "${section.label}" (Markdown supported)…`}
-                    rows={5}
-                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent resize-vertical font-mono text-sm"
-                  />
-                ) : (
-                  <div
-                    className="min-h-20 px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-gray-200 text-sm prose prose-invert prose-sm max-w-none"
-                    dangerouslySetInnerHTML={{ __html: marked.parse(analyses[section.id] || '*No content yet.*') }}
-                  />
-                )}
-              </div>
+        {/* Report iframe — takes remaining height */}
+        <div style={{ flex: 1, overflow: 'hidden', background: '#fff' }}>
+          {reportPreviewHtml ? (
+            <iframe
+              ref={iframeRef}
+              srcDoc={reportPreviewHtml}
+              style={{ width: '100%', height: '100%', border: 'none' }}
+              title="Aperçu du rapport"
+              sandbox="allow-scripts"
+            />
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#6b7280', fontSize: 15, gap: 10 }}>
+              <Loader2 size={20} style={{ animation: 'spin 1s linear infinite' }} />
+              Chargement de l&apos;aperçu…
             </div>
-          ))}
+          )}
         </div>
 
-        {/* Bottom export bar */}
-        {exportStatus && (
-          <div className="fixed bottom-0 left-0 right-0 bg-gray-900 border-t border-gray-700 px-6 py-3 flex items-center justify-between">
-            <span className="text-sm text-gray-300">{exportStatus.message}</span>
-            {exportStatus.pdf_url && (
-              <button onClick={() => handleDownload('pdf', 'report')}
-                className="bg-red-600 hover:bg-red-700 text-white font-medium py-1 px-4 rounded-md text-sm flex items-center gap-2">
-                <Download className="w-4 h-4" /> Download PDF
-              </button>
-            )}
-          </div>
-        )}
+        <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
@@ -794,12 +973,12 @@ const ReportGeneratorInterface = () => {
                   </div>
                   <div className="flex flex-wrap items-center justify-center gap-2">
                     <button
-                      onClick={() => setShowChangePassword(true)}
+                      onClick={() => { setShowAccount(true); setAuthError(null); setProfileSaveSuccess(false); }}
                       className="flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-3 sm:px-4 rounded-md transition duration-300 text-sm"
                     >
-                      <Lock className="w-4 h-4 mr-1 sm:mr-2" />
-                      <span className="hidden sm:inline">Change Password</span>
-                      <span className="sm:hidden">Password</span>
+                      <User className="w-4 h-4 mr-1 sm:mr-2" />
+                      <span className="hidden sm:inline">Account</span>
+                      <span className="sm:hidden">Account</span>
                     </button>
                     {currentUser?.role === 'admin' && (
                       <button
@@ -895,22 +1074,14 @@ const ReportGeneratorInterface = () => {
               </div>
             </div>
           )}
-          {/* Change Password Modal */}
-          {showChangePassword && (
+          {/* Account Modal */}
+          {showAccount && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-              <div className="bg-gray-800 rounded-lg shadow-lg p-6 w-full max-w-md">
+              <div className="bg-gray-800 rounded-lg shadow-lg p-6 w-full max-w-md max-h-screen overflow-y-auto">
                 <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-xl font-semibold text-white">Change Password</h3>
+                  <h3 className="text-xl font-semibold text-white">Account</h3>
                   <button
-                    onClick={() => {
-                      setShowChangePassword(false);
-                      setPasswordData({
-                        currentPassword: '',
-                        newPassword: '',
-                        confirmNewPassword: ''
-                      });
-                      setAuthError(null);
-                    }}
+                    onClick={() => { setShowAccount(false); setAuthError(null); setProfileSaveSuccess(false); setShowChangePassword(false); }}
                     className="text-gray-400 hover:text-white"
                   >
                     <XCircle className="w-6 h-6" />
@@ -925,78 +1096,104 @@ const ReportGeneratorInterface = () => {
                     <p className="text-red-600 mt-1">{authError}</p>
                   </div>
                 )}
-                <form onSubmit={handleChangePasswordSubmit}>
-                  <div className="mb-4">
-                    <label htmlFor="current-password" className="block text-sm font-medium text-gray-300 mb-2">
-                      Current Password
-                    </label>
+                {profileSaveSuccess && (
+                  <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <p className="text-green-700 font-medium">Profile saved successfully.</p>
+                  </div>
+                )}
+                {/* Profile section */}
+                <form onSubmit={handleProfileSave}>
+                  <p className="text-gray-400 text-sm mb-3">Optional profile information used to pre-fill reporter details in report forms.</p>
+                  <div className="mb-3">
+                    <label className="block text-sm font-medium text-gray-300 mb-1">First name</label>
                     <input
-                      type="password"
-                      id="current-password"
-                      name="currentPassword"
-                      value={passwordData.currentPassword}
-                      onChange={handlePasswordInputChange}
-                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="Enter your current password"
-                      required
+                      type="text"
+                      value={profileData.firstName}
+                      onChange={e => setProfileData(p => ({ ...p, firstName: e.target.value }))}
+                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Optional"
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="block text-sm font-medium text-gray-300 mb-1">Last name</label>
+                    <input
+                      type="text"
+                      value={profileData.lastName}
+                      onChange={e => setProfileData(p => ({ ...p, lastName: e.target.value }))}
+                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Optional"
                     />
                   </div>
                   <div className="mb-4">
-                    <label htmlFor="new-password" className="block text-sm font-medium text-gray-300 mb-2">
-                      New Password
-                    </label>
+                    <label className="block text-sm font-medium text-gray-300 mb-1">Email</label>
                     <input
-                      type="password"
-                      id="new-password"
-                      name="newPassword"
-                      value={passwordData.newPassword}
-                      onChange={handlePasswordInputChange}
-                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="Enter your new password"
-                      required
-                      minLength="6"
+                      type="email"
+                      value={profileData.email}
+                      onChange={e => setProfileData(p => ({ ...p, email: e.target.value }))}
+                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
-                  <div className="mb-4">
-                    <label htmlFor="confirm-new-password" className="block text-sm font-medium text-gray-300 mb-2">
-                      Confirm New Password
-                    </label>
-                    <input
-                      type="password"
-                      id="confirm-new-password"
-                      name="confirmNewPassword"
-                      value={passwordData.confirmNewPassword}
-                      onChange={handlePasswordInputChange}
-                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="Confirm your new password"
-                      required
-                      minLength="6"
-                    />
-                  </div>
-                  <div className="flex justify-end space-x-4">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowChangePassword(false);
-                        setPasswordData({
-                          currentPassword: '',
-                          newPassword: '',
-                          confirmNewPassword: ''
-                        });
-                        setAuthError(null);
-                      }}
-                      className="px-4 py-2 bg-gray-600 rounded-md text-white hover:bg-gray-700"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-4 py-2 bg-blue-600 rounded-md text-white hover:bg-blue-700"
-                    >
-                      Change Password
+                  <div className="flex justify-end mb-6">
+                    <button type="submit" className="px-4 py-2 bg-blue-600 rounded-md text-white hover:bg-blue-700 text-sm">
+                      Save profile
                     </button>
                   </div>
                 </form>
+                {/* Password change section */}
+                <div className="border-t border-gray-600 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => { setShowChangePassword(v => !v); setAuthError(null); }}
+                    className="text-sm text-gray-300 hover:text-white flex items-center gap-1 mb-3"
+                  >
+                    <Lock className="w-4 h-4" />
+                    {showChangePassword ? 'Hide password change' : 'Change password'}
+                  </button>
+                  {showChangePassword && (
+                    <form onSubmit={handleChangePasswordSubmit}>
+                      <div className="mb-3">
+                        <label className="block text-sm font-medium text-gray-300 mb-1">Current password</label>
+                        <input
+                          type="password"
+                          name="currentPassword"
+                          value={passwordData.currentPassword}
+                          onChange={handlePasswordInputChange}
+                          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          required
+                        />
+                      </div>
+                      <div className="mb-3">
+                        <label className="block text-sm font-medium text-gray-300 mb-1">New password</label>
+                        <input
+                          type="password"
+                          name="newPassword"
+                          value={passwordData.newPassword}
+                          onChange={handlePasswordInputChange}
+                          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          required
+                          minLength="6"
+                        />
+                      </div>
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-300 mb-1">Confirm new password</label>
+                        <input
+                          type="password"
+                          name="confirmNewPassword"
+                          value={passwordData.confirmNewPassword}
+                          onChange={handlePasswordInputChange}
+                          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          required
+                          minLength="6"
+                        />
+                      </div>
+                      <div className="flex justify-end">
+                        <button type="submit" className="px-4 py-2 bg-blue-600 rounded-md text-white hover:bg-blue-700 text-sm">
+                          Change password
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -1280,14 +1477,50 @@ const ReportGeneratorInterface = () => {
                     placeholder="e.g., LABO"
                   />
                 </div>
+                {/* Reporter name */}
+                <div>
+                  <label htmlFor="reporter" className="block text-sm font-medium text-gray-300 mb-2">
+                    Référent·e laboratoire
+                    <span className="text-gray-500 font-light"> <br/>
+                      Nom affiché sur la dernière page du rapport. Optionnel.
+                    </span>
+                  </label>
+                  <input
+                    type="text"
+                    id="reporter"
+                    name="reporter"
+                    value={formData.reporter}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                    placeholder="e.g., Prénom Nom"
+                  />
+                </div>
+                {/* Reporter email */}
+                <div>
+                  <label htmlFor="reporterEmail" className="block text-sm font-medium text-gray-300 mb-2">
+                    Email référent·e
+                    <span className="text-gray-500 font-light"> <br/>
+                      Adresse email affichée sur la dernière page. Optionnel.
+                    </span>
+                  </label>
+                  <input
+                    type="email"
+                    id="reporterEmail"
+                    name="reporterEmail"
+                    value={formData.reporterEmail}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                    placeholder="e.g., prenom.nom@exemple.fr"
+                  />
+                </div>
               </div>
             </div>
             {/* Compilation Section */}
             <div className="text-center mb-8">
               <button
                 onClick={handleGeneration}
-                disabled={isCompiling || polling || !isAuthenticated}
-                className="bg-teal-700 hover:bg-teal-800 disabled:bg-teal-500 text-white font-semibold py-3 px-8 rounded-lg transition duration-300 flex items-center justify-center mx-auto space-x-2 shadow-md"
+                disabled={isCompiling || polling || !isAuthenticated || isExporting}
+                className="bg-teal-700 hover:bg-teal-800 disabled:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-60 text-white font-semibold py-3 px-8 rounded-lg transition duration-300 flex items-center justify-center mx-auto space-x-2 shadow-md"
               >
                 {isCompiling || polling ? (
                   <>
@@ -1376,20 +1609,43 @@ const ReportGeneratorInterface = () => {
                       : 'Partial Success - PDF Compilation Failed'}
                   </p>
                 </div>
-                <p className={
-                  compilationResult.status === 'completed' 
-                    ? 'text-green-600' 
-                    : 'text-yellow-600'
-                }>
-                  {compilationResult.message}
-                </p>
-                {compilationResult.status === 'partial' && (
-                  <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded">
-                    <p className="text-blue-700 text-sm">
-                      <strong>Good news:</strong> Your data has been successfully fetched and the ZIP archive is available for download. 
-                      You can download the ZIP file and compile the LaTeX project locally if needed.
-                    </p>
-                  </div>
+                {compilationResult.status === 'completed' ? (
+                  isExporting ? (
+                    <div className="mt-1 flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin text-green-500 flex-shrink-0" />
+                      <p className="text-green-600 text-sm">Finalisation de l'export en cours (HTML, CSS, annotations)…</p>
+                    </div>
+                  ) : (
+                    <div className="mt-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <p className="text-green-600">Go to the editing page to add or change comments.</p>
+                      <button
+                        onClick={() => setEditMode(true)}
+                        className="flex-shrink-0 flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-md text-sm transition duration-300"
+                      >
+                        <FileText className="w-4 h-4" />
+                        Go to editing page
+                      </button>
+                    </div>
+                  )
+                ) : (
+                  <>
+                    <p className="text-yellow-600">{compilationResult.message}</p>
+                    <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded">
+                      <p className="text-blue-700 text-sm">
+                        <strong>Good news:</strong> Your data has been successfully fetched and the ZIP archive is available for download.
+                        You can download the ZIP file and compile the LaTeX project locally if needed.
+                      </p>
+                    </div>
+                    <div className="mt-3">
+                      <button
+                        onClick={() => setEditMode(true)}
+                        className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-md text-sm transition duration-300"
+                      >
+                        <FileText className="w-4 h-4" />
+                        Go to editing page
+                      </button>
+                    </div>
+                  </>
                 )}
               </div>
             )}
@@ -1412,7 +1668,7 @@ const ReportGeneratorInterface = () => {
                       </p>
                       <button
                         onClick={() => handleDownload('pdf', 'report')}
-                        disabled={isDownloading.pdf}
+                        disabled={isDownloading.pdf || isExporting}
                         className="w-full bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white font-medium py-2 px-4 rounded-md transition duration-300 flex items-center justify-center space-x-2 mt-auto"
                       >
                         {isDownloading.pdf ? (
@@ -1442,7 +1698,7 @@ const ReportGeneratorInterface = () => {
                       </p>
                       <button
                         onClick={() => handleDownload('pdf', 'biblio')}
-                        disabled={isDownloading.biblio}
+                        disabled={isDownloading.biblio || isExporting}
                         className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-medium py-2 px-4 rounded-md transition duration-300 flex items-center justify-center space-x-2 mt-auto"
                       >
                         {isDownloading.biblio ? (
@@ -1460,7 +1716,7 @@ const ReportGeneratorInterface = () => {
                     </div>
                   )}
 
-                  {/* ZIP Download - Always available for both completed and partial status */}
+                  {/* ZIP Export — re-renders HTML with annotations + inlined CSS, then downloads ZIP */}
                   {(compilationResult.zip_available !== false) && (
                     <div className={`bg-gray-700 p-6 rounded-lg border border-gray-600 flex flex-col ${
                       compilationResult.status === 'partial' ? 'md:col-span-3' : ''
@@ -1468,7 +1724,7 @@ const ReportGeneratorInterface = () => {
                       <div className="flex items-center mb-3">
                         <Archive className="w-6 h-6 text-orange-500 mr-2" />
                         <h4 className="font-semibold text-white">
-                          Source Archive
+                          Export ZIP
                           {compilationResult.status === 'partial' && (
                             <span className="ml-2 bg-yellow-500 text-yellow-900 px-2 py-1 rounded text-xs font-medium">
                               Available
@@ -1477,25 +1733,22 @@ const ReportGeneratorInterface = () => {
                         </h4>
                       </div>
                       <p className="text-gray-300 mb-4 text-sm flex-grow">
-                        {compilationResult.status === 'partial'
-                          ? 'Download the complete LaTeX project as ZIP. You can compile this locally to generate the PDF files.'
-                          : 'Download the complete LaTeX project as ZIP'
-                        }
+                        Génère le rapport HTML final (avec annotations et CSS embarqué) et télécharge le projet complet en ZIP.
                       </p>
                       <button
-                        onClick={() => handleDownload('zip')}
-                        disabled={isDownloading.zip}
+                        onClick={handleExportZip}
+                        disabled={isExporting}
                         className="w-full bg-orange-600 hover:bg-orange-700 disabled:bg-orange-400 text-white font-medium py-2 px-4 rounded-md transition duration-300 flex items-center justify-center space-x-2 mt-auto"
                       >
-                        {isDownloading.zip ? (
+                        {isExporting ? (
                           <>
                             <Loader2 className="w-4 h-4 animate-spin" />
-                            <span>Downloading...</span>
+                            <span>Génération en cours…</span>
                           </>
                         ) : (
                           <>
                             <Download className="w-4 h-4" />
-                            <span>Download ZIP</span>
+                            <span>Exporter ZIP</span>
                           </>
                         )}
                       </button>
