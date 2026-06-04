@@ -8,7 +8,7 @@ This is a multi-module workspace for generating automated bibliometric reports a
 - **BiSO** (Bilan Science Ouverte): open-science annual reports for research labs
 - **PubPart** (Publications & Partnerships): topic/institution/collaboration analysis
 
-The workspace contains 5 subprojects: two Python libraries (`dibisoreporting`, `dibisoplot`), a LaTeX template collection (`dibiso-latex-templates`), a FastAPI backend (`dibiso-reporting-api`), and a React frontend (`dibiso-reporting-webapp`).
+The workspace contains 6 subprojects: two Python libraries (`dibisoreporting`, `dibisoplot`), an HTML template collection (`dibiso-html-templates`), a legacy LaTeX template collection (`dibiso-latex-templates`, unused by the current pipeline), a FastAPI backend (`dibiso-reporting-api`), and a React frontend (`dibiso-reporting-webapp`).
 
 ## Development Commands
 
@@ -25,15 +25,21 @@ python -m build
 python -m twine upload dist/*
 ```
 
+### API + Webapp — Docker (recommended)
+
+```bash
+# From repo root — deploys both services together
+cp .env.template .env   # fill in secrets (see .env.template for required vars)
+docker compose up -d --build
+# Interface: http://localhost:8080  API: http://localhost:8000
+```
+
 ### API (`dibiso-reporting-api/`)
 
 ```bash
 cp .env.template .env   # then fill in secrets
 pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-# Or via Docker
-docker-compose up
 ```
 
 ### Webapp (`dibiso-reporting-webapp/`)
@@ -41,10 +47,9 @@ docker-compose up
 ```bash
 cp .env.template .env   # set VITE_API_URL
 npm install
-npm run dev      # dev server
+npm run dev      # dev server (http://localhost:3000)
 npm run build    # production build
 npm run lint     # ESLint
-docker-compose up
 ```
 
 There are no automated test suites; validation is done manually via the API and webapp.
@@ -56,56 +61,91 @@ There are no automated test suites; validation is done manually via the API and 
 ```
 React Webapp  →  FastAPI  →  background thread:
                                1. fetch data (HAL / OpenAlex / ScanR APIs)
-                               2. dibisoplot  → Plotly figures (PDF + LaTeX)
-                               3. dibisoreporting → names_and_macros.tex + figure layout
-                               4. LuaTeX compilation (3 passes + Biber + 2 more passes)
+                               2. dibisoplot  → Plotly figures (SVG files)
+                               3. dibisoreporting → Jinja2 HTML rendering
+                                  (saves figures.json + context.json)
+                             ↓
+                          render_html_to_pdf():
+                               WeasyPrint → report.pdf + biblio.pdf
+                               PyMuPDF (optional) → background overlay
                              ↓
                           PDF/ZIP download via authenticated endpoint
 ```
 
+Reports have two statuses after generation:
+- `completed` — PDF + ZIP both available
+- `partial` — PDF failed (e.g. GTK/WeasyPrint missing on Windows), ZIP still available
+
 ### Key class hierarchy
 
 **`DibisoReporting`** (`dibisoreporting/dibisoreporting/dibisoreporting.py`)
-- Manages LaTeX project directory, acquires template files (local path or GitHub release URL)
-- Creates `names_and_macros.tex` with all LaTeX macro definitions
+- Manages Jinja2 HTML template directory (local path or GitHub release URL)
 - Orchestrates figure generation by instantiating `dibisoplot` classes
+- `generate_report()` saves SVG figures, `figures.json`, `context.json`, and rendered HTML
+- `render_from_saved(root_path, analyses)` re-renders HTML from saved data (used for the edit/export flow)
 - `Biso` and `PubPart` subclasses live in their respective subdirectories
 
 **`Dibisoplot`** (`dibisoplot/dibisoplot/dibisoplot.py`)
 - Base for all chart types; wraps Plotly with consistent styling
 - Tracks per-figure data status: `NOT_FETCHED`, `OK`, `NO_DATA`, `ERROR`
-- Converts DataFrames to LaTeX `longtable` output
 - Dynamic height calculation for horizontal bar charts
 - 12 BiSO visualization subclasses in `dibisoplot/dibisoplot/biso/biso.py` (e.g. `AnrProjects`, `CollaborationMap`, `Journals`, `WorksType`)
 
 **FastAPI app** (`dibiso-reporting-api/app/main.py`)
 - JWT auth (48-hour tokens, `OAuth2PasswordBearer`)
 - Report jobs run in a `ThreadPoolExecutor` (default 4 workers, configurable via env)
-- Compilation status tracked with progress % and current step; supports cancellation by terminating the subprocess
-- Auto-cleanup of old temp directories (configurable retention period)
-- Key endpoints: `POST /generate-report`, `GET /compilation-status/{comp_id}`, `POST /cancel-compilation/{comp_id}`, `GET /download-pdf`, `GET /download-zip`
+- `REPORT_SECTIONS` registry defines the ordered sections for BiSO and PubPart
+- Compilation status tracked with progress % and current step; supports cancellation
+- Auto-cleanup of old temp directories (prefix `html_output_`, configurable retention)
+- SVG style-to-attribute conversion (`_convert_svg_style_to_attrs`) for WeasyPrint compatibility
+- CSS/asset inlining (`_inline_assets_in_html`) for self-contained HTML export
+- Key endpoints:
+  - `POST /generate-report` — start report generation
+  - `GET /compilation-status/{comp_id}` — poll progress
+  - `POST /cancel-compilation/{comp_id}` — cancel running job
+  - `GET /report-sections/{comp_id}` — list editable sections after generation
+  - `GET/PUT /analyses/{comp_id}/{section_id}` — load/save per-section Markdown analyses
+  - `GET /figures/{comp_id}/{figure_name}` — serve SVG figure for editor preview
+  - `POST /export/{comp_id}` — re-render HTML with analyses + produce PDF+ZIP
+  - `GET /download-pdf`, `GET /download-zip`, `GET /download-html` — download outputs
+  - `GET /template-assets/{file_path}` — serve CSS/image assets from the HTML template (public, restricted to `css/` and `assets/`)
 
 **React frontend** (`dibiso-reporting-webapp/src/App.jsx`)
-- Single-file component handling auth, report form, status polling, downloads, and admin user management
+- Single-file component; EN/FR toggle via `TRANSLATIONS` object
+- Handles: auth, report form, status polling, downloads, admin user management
+- After generation: shows edit view with per-section Markdown editor and figure preview
+- "Export ZIP" button re-renders HTML with analyses (inlined CSS, embedded SVGs) via `/export`
 
-### LaTeX compilation details
+### HTML template pipeline
 
-LuaTeX is invoked via subprocess with a default 180-second timeout. The sequence is:
-1. `lualatex` × 3 on main file
-2. `biber` for bibliography
-3. `lualatex` × 2 on biblio file
+`dibiso-html-templates/` contains the Jinja2 templates and CSS. The template directory is:
+- **Docker**: bind-mounted read-only at `/html_templates` (from repo root `./dibiso-html-templates`)
+- **Local dev**: pointed to by `HTML_TEMPLATE_PATH` in `.env`
+- **Fallback**: downloaded from GitHub release URL (`HTML_TEMPLATE_URL`)
 
-Default latexmkrc: `$pdflatex = 'lualatex %O %S --shell-escape'; $pdf_mode = 1;`
+The template directory must have a `dibiso-html/` subdirectory inside it (i.e. `HTML_TEMPLATE_PATH` points to the **parent** of `dibiso-html/`).
 
 ### External API dependencies
 
-- **HAL** (`https://api.archives-ouvertes.fr/`) — publication metadata
+- **HAL** (`https://api.archives-ouvertes.fr/`) — publication metadata and collection validation
 - **OpenAlex** — bibliometric analysis (via `openalex-analysis` / `pyalex`)
-- **ScanR** — French research project data
-- **GitHub API** — fetching latest LaTeX template releases
+- **ScanR** — French research project data (ANR, European projects, BSO journals)
+- **GitHub API** — fetching latest HTML template releases (fallback only)
 
 ### Environment configuration
 
-Both `dibiso-reporting-api/.env.template` and `dibiso-reporting-webapp/.env.template` must be copied to `.env` and filled in before running. The API template defines 55+ variables covering JWT secrets, admin credentials, LaTeX paths, external API credentials, CORS settings, thread-pool size, database location, and timeouts.
+The recommended way is to copy `.env.template` (at the repo root) to `.env` and fill in the secrets — this single file drives both the root `docker-compose.yml` and has comments explaining every variable.
 
-The SQLite user database schema: `id, username, email, hashed_password, role (user|admin), is_active, created_at`.
+For local dev, each service has its own `.env.template`:
+- `dibiso-reporting-api/.env.template` — API-specific settings
+- `dibiso-reporting-webapp/.env.template` — `VITE_API_URL` only
+
+Key variables (all have defaults except those marked required):
+- `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `SECRET_KEY` — **required**
+- `SCANR_API_PASSWORD`, `SCANR_API_URL`, `SCANR_API_USERNAME`, `SCANR_BSO_INDEX`, `SCANR_PUBLICATIONS_INDEX` — **required**
+- `OPENALEX_API_KEY`, `OPENALEX_EMAIL` — recommended for rate limits
+- `HTML_TEMPLATE_PATH` — local path to `dibiso-html-templates/`; if absent, template is downloaded from `HTML_TEMPLATE_URL`
+- `DATA_FETCHING_TIMEOUT_SECONDS` — default 1200 (needed for large labs)
+- `VITE_API_URL` — URL the browser uses to reach the API (baked into the webapp at build time)
+
+The SQLite user database schema: `id, username, email, hashed_password, role (user|admin), is_active, created_at, first_name, last_name`.
