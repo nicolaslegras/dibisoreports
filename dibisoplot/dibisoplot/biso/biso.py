@@ -1705,6 +1705,17 @@ class OpenAccessWorks(Biso):
         return fig
 
 
+# typologie_1 == "Entreprises" covers: Start-Up, Entreprise, Entreprise étrangère
+PRIVATE_SECTOR_TYPOLOGIE_1 = {"Entreprises"}
+# Extra typologie_2 values that fall under "Autres" but are genuine companies (ROR/SIRENE)
+PRIVATE_SECTOR_TYPOLOGIE_2 = {
+    "Entreprise (ROR)",
+    "Petite & moyenne entreprise (SIRENE)",
+    "Entreprise de taille intermédiaire (SIRENE)",
+    "Grande entreprise (SIRENE)",
+}
+
+
 class PrivateSectorCollaborations(Biso):
     """
     A class to fetch and generate a plots with the names of the private sector collaborations.
@@ -1762,8 +1773,9 @@ class PrivateSectorCollaborations(Biso):
 
             for work in works:
                 for affiliation in work.get('_source', {}).get('affiliations', []):
-                    if 'kind' in affiliation and 'Secteur privé' in affiliation['kind']:
-                        # Extract the name (label) of the institution
+                    t1 = affiliation.get('typologie_1')
+                    t2 = affiliation.get('typologie_2')
+                    if t1 in PRIVATE_SECTOR_TYPOLOGIE_1 or t2 in PRIVATE_SECTOR_TYPOLOGIE_2:
                         if 'label' in affiliation:
                             name = affiliation['label'].get('default', affiliation['label'].get('fr', affiliation['label'].get('en', 'Unknown')))
                             if len(name) > 75:
