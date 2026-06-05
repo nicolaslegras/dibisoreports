@@ -146,6 +146,14 @@ const TRANSLATIONS = {
     exportFailed: (msg) => `Export ZIP failed: ${msg}`,
     pollingFailed: (msg) => `Polling failed: ${msg}`,
     downloadFailed: (type) => `Failed to download ${type.toUpperCase()}`,
+
+    uploadProject: "Open project from ZIP",
+    uploadProjectDescription: "Upload a previously exported project ZIP archive to resume editing its annotations.",
+    selectZip: "Select a ZIP file",
+    uploadAndOpen: "Upload and open",
+    uploading: "Uploading…",
+    uploadErrorInvalid: "Invalid archive. The file must be a project ZIP exported from this application (must contain figures.json and context.json).",
+    uploadErrorGeneric: (msg) => `Upload failed: ${msg}`,
   },
   fr: {
     appDescription: "Générez le bilan de science ouverte pour une année et une collection HAL.",
@@ -287,6 +295,14 @@ const TRANSLATIONS = {
     exportFailed: (msg) => `Export ZIP échoué : ${msg}`,
     pollingFailed: (msg) => `Polling échoué : ${msg}`,
     downloadFailed: (type) => `Échec du téléchargement : ${type.toUpperCase()}`,
+
+    uploadProject: "Ouvrir un projet depuis une archive ZIP",
+    uploadProjectDescription: "Importez une archive ZIP de projet précédemment exportée pour reprendre l'édition de ses annotations.",
+    selectZip: "Choisir une archive ZIP",
+    uploadAndOpen: "Importer et ouvrir",
+    uploading: "Import en cours…",
+    uploadErrorInvalid: "Archive invalide. Le fichier doit être une archive ZIP de projet exportée depuis cette application (doit contenir figures.json et context.json).",
+    uploadErrorGeneric: (msg) => `Échec de l'import : ${msg}`,
   }
 };
 
@@ -350,6 +366,11 @@ const ReportGeneratorInterface = () => {
   const [sections, setSections] = useState([]);
   const [analyses, setAnalyses] = useState({});
   const [isExporting, setIsExporting] = useState(false);
+
+  // Upload project state
+  const [uploadFile, setUploadFile] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
 
   const [reportPreviewHtml, setReportPreviewHtml] = useState('');
   const iframeRef = useRef(null);
@@ -1178,6 +1199,55 @@ const ReportGeneratorInterface = () => {
       setError(tr.compilationCancelled);
     } catch (err) {
       setError(`Cancellation failed: ${err.message}`);
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!uploadFile || !isAuthenticated) return;
+    setIsUploading(true);
+    setUploadError(null);
+    try {
+      const formDataObj = new FormData();
+      formDataObj.append('file', uploadFile);
+      const res = await fetch(`${API_BASE_URL}/upload-project`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: formDataObj,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const detail = err.detail || '';
+        if (res.status === 400 || res.status === 422) {
+          throw new Error(tr.uploadErrorInvalid);
+        }
+        throw new Error(tr.uploadErrorGeneric(detail || res.statusText));
+      }
+      const result = await res.json();
+      const compId = result.comp_id;
+
+      // Update form data from ZIP context so the edit page title is correct
+      if (result.entity_acronym || result.year) {
+        setFormData(prev => ({
+          ...prev,
+          entityAcronym: result.entity_acronym || prev.entityAcronym,
+          year: result.year || prev.year,
+        }));
+      }
+
+      // Fetch sections + analyses, then enter edit mode directly
+      const [secRes, anaRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/report-sections/${compId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
+        fetch(`${API_BASE_URL}/analyses/${compId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
+      ]);
+      if (secRes.ok) setSections(await secRes.json());
+      if (anaRes.ok) setAnalyses(await anaRes.json());
+      setCompilationId(compId);
+      setUploadFile(null);
+      setEditMode(true);
+    } catch (e) {
+      setUploadError(e.message);
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -2085,6 +2155,54 @@ const ReportGeneratorInterface = () => {
               </div>
             )}
           </div>
+          {/* Upload project ZIP */}
+          {isAuthenticated && !polling && !isCompiling && (
+            <div className="mt-6 bg-gray-800 rounded-xl shadow-lg p-6">
+              <h3 className="text-lg font-semibold text-white mb-2">{tr.uploadProject}</h3>
+              <p className="text-gray-400 text-sm mb-4">{tr.uploadProjectDescription}</p>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                <label className="flex-1 cursor-pointer">
+                  <span className="sr-only">{tr.selectZip}</span>
+                  <input
+                    type="file"
+                    accept=".zip,application/zip"
+                    onChange={e => { setUploadFile(e.target.files[0] || null); setUploadError(null); }}
+                    className="block w-full text-sm text-gray-400
+                      file:mr-3 file:py-2 file:px-4
+                      file:rounded-md file:border-0
+                      file:text-sm file:font-medium
+                      file:bg-gray-700 file:text-gray-200
+                      hover:file:bg-gray-600 cursor-pointer"
+                  />
+                </label>
+                <button
+                  onClick={handleUpload}
+                  disabled={!uploadFile || isUploading}
+                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-60 text-white font-medium py-2 px-5 rounded-md transition duration-300 text-sm flex-shrink-0"
+                >
+                  {isUploading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>{tr.uploading}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Archive className="w-4 h-4" />
+                      <span>{tr.uploadAndOpen}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+              {uploadError && (
+                <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <XCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-red-700 text-sm">{uploadError}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           {/* Instructions */}
           <div className="mt-8 bg-gray-800 rounded-xl shadow-lg p-6">
             <p className="text-white mb-4">

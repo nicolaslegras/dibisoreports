@@ -14,7 +14,8 @@ import concurrent.futures
 import urllib.parse
 import requests
 
-from fastapi import FastAPI, HTTPException, Depends, Request
+import json
+from fastapi import FastAPI, HTTPException, Depends, Request, UploadFile, File
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -608,6 +609,11 @@ async def admin_delete_user(
     return {"message": "User deleted successfully"}
 
 
+# Upload limits
+_UPLOAD_MAX_COMPRESSED = 40 * 1024 * 1024    # 40 MB compressed ZIP
+_UPLOAD_MAX_UNCOMPRESSED = 300 * 1024 * 1024  # 300 MB total uncompressed
+_UPLOAD_MAX_MEMBERS = 2000                    # max files in ZIP
+
 # Report generation endpoints
 def update_compilation_status(comp_id: str, progress: int, step: str, status: str = "running"):
     """Update the compilation status for a given compilation ID"""
@@ -622,7 +628,12 @@ def update_compilation_status(comp_id: str, progress: int, step: str, status: st
 
 
 def apply_background_to_pdf(pdf_path: Path, background_pdf_path: Path) -> None:
-    """Overlay cycling background pages on content pages of a PDF (skip first and last)."""
+    """Overlay cycling background pages on content pages of a PDF (skip first and last).
+
+    Inserts the background as an XObject *behind* the existing page content (overlay=False)
+    so the original PDF structure — named destinations, link annotations, name tree — is
+    preserved intact and TOC links remain functional.
+    """
     try:
         import fitz
     except ImportError:
@@ -639,18 +650,16 @@ def apply_background_to_pdf(pdf_path: Path, background_pdf_path: Path) -> None:
             bg_doc.close()
             main_doc.close()
             return
-        new_doc = fitz.open()
-        for i in range(n):
+        for i in range(1, n - 1):  # skip title page (0) and last page (n-1)
             page = main_doc[i]
-            new_page = new_doc.new_page(width=page.rect.width, height=page.rect.height)
-            if 1 <= i <= n - 2:
-                bg_idx = (i - 1) % num_bg
-                new_page.show_pdf_page(new_page.rect, bg_doc, bg_idx)
-            new_page.show_pdf_page(new_page.rect, main_doc, i)
+            bg_idx = (i - 1) % num_bg
+            # overlay=False places the background behind the existing page content
+            page.show_pdf_page(page.rect, bg_doc, bg_idx, overlay=False)
         bg_doc.close()
+        # Serialise to bytes before closing so we can write back without file-lock issues
+        data = main_doc.tobytes()
         main_doc.close()
-        new_doc.save(str(pdf_path))
-        new_doc.close()
+        pdf_path.write_bytes(data)
         logger.info(f"Applied background overlay to {pdf_path.name}")
     except Exception as e:
         logger.error(f"Background overlay failed for {pdf_path}: {e}")
@@ -688,11 +697,12 @@ def render_html_to_pdf(project_dir: Path, output_dir: Path, comp_id: str) -> lis
         logger.warning(f"WeasyPrint unavailable (missing system library: {e}). "
                        "HTML files will be available but no PDF will be generated. "
                        "Install the GTK3 runtime (see README_RUN.md) to enable PDF export.")
-        # Copy HTML files to output dir so they can still be downloaded via ZIP
+        # Inline CSS/assets so the HTML is self-contained for the webapp preview and ZIP
         for name in ("report", "biblio"):
             html_path = project_dir / f"{name}.html"
             if html_path.exists():
-                shutil.copy2(str(html_path), str(output_dir / f"{name}.html"))
+                inlined = _inline_assets_in_html(html_path.read_text(encoding="utf-8"), project_dir)
+                (output_dir / f"{name}.html").write_text(inlined, encoding="utf-8")
         return [None, None]
 
     results = []
@@ -707,12 +717,17 @@ def render_html_to_pdf(project_dir: Path, output_dir: Path, comp_id: str) -> lis
         update_compilation_status(comp_id, progress, f"Converting {name}.html to PDF...")
         try:
             pdf_path = output_dir / f"{name}.pdf"
-            WeasyprintHTML(filename=str(html_path)).write_pdf(str(pdf_path), presentational_hints=True)
+            # Inline CSS/assets before WeasyPrint: CSS lives in project_dir/dibiso-html/css/
+            # but the HTML references it as css/base.css (relative to project_dir root), so
+            # WeasyPrint can't resolve it via filename=. Inlining also makes output_dir/report.html
+            # self-contained so the webapp preview renders correctly on the first load.
+            inlined = _inline_assets_in_html(html_path.read_text(encoding="utf-8"), project_dir)
+            inlined_html_path = output_dir / f"{name}.html"
+            inlined_html_path.write_text(inlined, encoding="utf-8")
+            WeasyprintHTML(filename=str(inlined_html_path)).write_pdf(str(pdf_path), presentational_hints=True)
             if html_template_path:
                 bg_path = Path(html_template_path) / "dibiso-html" / "assets" / "background.pdf"
                 apply_background_to_pdf(pdf_path, bg_path)
-            # Also copy HTML to output dir for download
-            shutil.copy2(str(html_path), str(output_dir / f"{name}.html"))
             results.append(pdf_path)
         except Exception as e:
             logger.error(f"WeasyPrint failed for {name}: {e}")
@@ -1374,6 +1389,14 @@ def _do_export(comp_id: str, user_id: int, project_dir: Path, output_dir: Path):
                 compilation_status[comp_id]['last_updated'] = datetime.now()
         return
 
+    # Bundle raw Markdown analyses alongside figures so they can be re-imported from the ZIP
+    try:
+        (project_dir / "analyses.json").write_text(
+            json.dumps(raw_analyses, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception as e:
+        logger.warning(f"Could not save analyses.json for {comp_id}: {e}")
+
     # Step 2: Inline CSS+assets → self-contained HTML in output dir
     html_urls = {}
     for name in ("report", "biblio"):
@@ -1616,6 +1639,172 @@ async def cancel_compilation(
                 logger.error(f"Error terminating data fetching process for {comp_id}: {e}")
 
     return {"message": "Compilation cancelled successfully"}
+
+
+# ── Upload project ZIP ───────────────────────────────────────────────────────
+
+def _do_upload_render(project_dir: Path, raw_analyses: dict, user_id: int, context_data: dict):
+    """Render HTML from an uploaded project ZIP and register it. Returns (comp_id, acronym, year)."""
+    import markdown as md_lib
+    from dibisoreporting import DibisoReporting
+
+    try:
+        analyses_html = {k: md_lib.markdown(v) for k, v in raw_analyses.items() if v}
+        DibisoReporting.render_from_saved(str(project_dir), analyses_html)
+    except Exception as e:
+        shutil.rmtree(project_dir, ignore_errors=True)
+        raise RuntimeError(f"Could not render report from ZIP: {e}")
+
+    output_dir = Path(tempfile.mkdtemp(prefix="html_output_"))
+    for name in ("report", "biblio"):
+        html_path = project_dir / f"{name}.html"
+        if html_path.exists():
+            inlined = _inline_assets_in_html(html_path.read_text(encoding="utf-8"), project_dir)
+            (output_dir / f"{name}.html").write_text(inlined, encoding="utf-8")
+
+    comp_id = str(uuid.uuid4())
+    with compilation_lock:
+        compilation_status[comp_id] = {
+            'status': 'completed',
+            'progress': 100,
+            'current_step': 'Project loaded from ZIP',
+            'result': {
+                'message': 'Project loaded from ZIP',
+                'pdf_url': None,
+                'zip_url': None,
+                'compilation_id': comp_id,
+                'pdf_available': False,
+            },
+            'project_dir': str(project_dir),
+            'temp_dir': str(output_dir),
+            'user_id': user_id,
+            'last_updated': datetime.now(),
+        }
+
+    for section_id, content in raw_analyses.items():
+        upsert_analysis(comp_id, user_id, section_id, content)
+
+    return comp_id, context_data.get('labacronym', ''), context_data.get('reportyear', '')
+
+
+@app.post("/upload-project")
+async def upload_project(
+    file: UploadFile = File(...),
+    current_user: Annotated[dict, Depends(get_current_active_user)] = None
+):
+    """Upload a previously exported project ZIP to resume editing."""
+    import io
+
+    # 1. Read and check compressed size
+    data = await file.read(_UPLOAD_MAX_COMPRESSED + 1)
+    if len(data) > _UPLOAD_MAX_COMPRESSED:
+        raise HTTPException(status_code=413, detail="ZIP file exceeds 40 MB limit")
+
+    # 2. Open ZIP
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Invalid ZIP file")
+
+    with zf:
+        members = zf.infolist()
+
+        # 3. Security and size checks
+        if len(members) > _UPLOAD_MAX_MEMBERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"ZIP contains too many files (max {_UPLOAD_MAX_MEMBERS})"
+            )
+
+        total_uncompressed = 0
+        for member in members:
+            # Path traversal: reject absolute paths and any ".." component
+            parts = Path(member.filename).parts
+            if Path(member.filename).is_absolute() or '..' in parts:
+                raise HTTPException(status_code=400, detail="ZIP contains unsafe file paths")
+            # Symlink detection via Unix external_attr (upper 16 bits = Unix mode)
+            if (member.external_attr >> 16) & 0o170000 == 0o120000:
+                raise HTTPException(status_code=400, detail="ZIP contains symbolic links")
+            total_uncompressed += member.file_size
+
+        if total_uncompressed > _UPLOAD_MAX_UNCOMPRESSED:
+            raise HTTPException(
+                status_code=400,
+                detail="ZIP uncompressed content exceeds 300 MB limit"
+            )
+
+        # 4. Required files
+        names = {m.filename for m in members}
+        for required in ("figures.json", "context.json"):
+            if required not in names:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"ZIP is missing required file: {required}"
+                )
+
+        # 5. Validate figures.json — must be a non-empty JSON object
+        try:
+            figures_data = json.loads(zf.read("figures.json"))
+            if not isinstance(figures_data, dict) or not figures_data:
+                raise ValueError("must be a non-empty object")
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="figures.json must be a non-empty JSON object"
+            )
+
+        # 6. Validate context.json — must be a JSON object with report_type
+        try:
+            context_data = json.loads(zf.read("context.json"))
+            if not isinstance(context_data, dict) or "report_type" not in context_data:
+                raise ValueError("missing report_type")
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="context.json must be a JSON object with a 'report_type' field"
+            )
+
+        # 7. Read analyses.json if present (optional, ignore parse errors)
+        raw_analyses = {}
+        if "analyses.json" in names:
+            try:
+                a = json.loads(zf.read("analyses.json"))
+                if isinstance(a, dict):
+                    raw_analyses = {
+                        k: v for k, v in a.items()
+                        if isinstance(k, str) and isinstance(v, str)
+                    }
+            except Exception:
+                pass
+
+        # 8. Extract ZIP to a new project dir
+        project_dir = Path(tempfile.mkdtemp(prefix="html_output_"))
+        try:
+            zf.extractall(str(project_dir))
+        except Exception as e:
+            shutil.rmtree(project_dir, ignore_errors=True)
+            raise HTTPException(status_code=500, detail=f"ZIP extraction failed: {e}")
+
+    # 9. Render HTML + inline + register (sync work in thread pool)
+    loop = asyncio.get_event_loop()
+    try:
+        comp_id, entity_acronym, year = await loop.run_in_executor(
+            thread_pool,
+            _do_upload_render,
+            project_dir, raw_analyses, current_user['id'], context_data
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error during project upload render: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process uploaded project")
+
+    return {
+        "comp_id": comp_id,
+        "status": "completed",
+        "entity_acronym": str(entity_acronym) if entity_acronym else "",
+        "year": str(year) if year else "",
+    }
 
 
 @app.get("/download-pdf")
