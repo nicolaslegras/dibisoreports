@@ -6,3 +6,6 @@ __pycache__/
 *.pyo
 .env
 nginx_config
+test_biso_local.py
+output_test_lgi/
+.vscode/launch.json

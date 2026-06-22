@@ -1,5 +1,6 @@
 from dibisoplot.biso.biso import Biso
 from dibisoplot.biso.biso import AnrProjects
+from dibisoplot.biso.biso import Books
 from dibisoplot.biso.biso import Chapters
 from dibisoplot.biso.biso import CollaborationMap
 from dibisoplot.biso.biso import CollaborationNames
@@ -15,6 +16,7 @@ from dibisoplot.biso.biso import WorksType
 __all__ = [
     "Biso",
     "AnrProjects",
+    "Books",
     "Chapters",
     "CollaborationMap",
     "CollaborationNames",

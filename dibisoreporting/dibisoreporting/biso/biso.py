@@ -4,6 +4,7 @@ import logging
 import requests
 
 from dibisoplot.biso import AnrProjects
+from dibisoplot.biso import Books
 from dibisoplot.biso import Chapters
 from dibisoplot.biso import CollaborationMap
 from dibisoplot.biso import CollaborationNames
@@ -35,6 +36,7 @@ class Biso(DibisoReporting):
     # Map class names to actual classes
     class_mapping = {
         "AnrProjects": AnrProjects,
+        "Books": Books,
         "Chapters": Chapters,
         "CollaborationMap": CollaborationMap,
         "CollaborationNames": CollaborationNames,
@@ -58,6 +60,7 @@ class Biso(DibisoReporting):
                 "max_plotted_entities": 20
             }
         ],
+        "Books": [{}],
         "Chapters": [{}],
         "CollaborationMap": [
             {

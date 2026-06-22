@@ -61,7 +61,11 @@ class Biso(Dibisoplot):
             scanr_api_url: str | None = None,
             scanr_api_username: str | None = None,
             scanr_bso_index: str | None = None,
+<<<<<<< HEAD
             scanr_bso_version: str = "2025Q4",
+=======
+            scanr_bso_version: str | None = None,   # Now calculated dynamically
+>>>>>>> c56de6e (Implementation of Books class and open access colors in Journals class (with decision table for scanr imprecision handling))
             scanr_chunk_size: int = 50,
             scanr_publications_index: str | None = None,
             template: str = "simple_white",
@@ -127,6 +131,12 @@ class Biso(Dibisoplot):
         :param width: Width of the plot.
         :type width: int, optional
         """
+
+        # Dynamic calculation of BSO version (last quarter of the previous year)
+        if scanr_bso_version is None:
+            current_year = datetime.now().year
+            scanr_bso_version = f"{current_year - 1}Q4"
+
         super().__init__(
             entity_id = entity_id,
             year = year,
@@ -155,6 +165,39 @@ class Biso(Dibisoplot):
         self.scanr_chunk_size = scanr_chunk_size
         self.scanr_publications_index = scanr_publications_index
 
+        # Security check for BSO version
+        if self.scanr_api_url and self.scanr_bso_index:
+            self._validate_bso_version()
+
+    def _validate_bso_version(self):
+        """
+        Check if the dynamically calculated BSO version exists in the Elasticsearch index.
+        If the version is not found, automatically switch to the previous year's version.
+        """
+        try:
+            es = self.connect_to_elasticsearch()
+            query = {
+                "query": {"match_all": {}},
+                "_source": [f"oa_details.{self.scanr_bso_version}"],
+                "size": 1
+            }
+            response = es.search(index=self.scanr_bso_index, body=query)
+            
+            # Check if the returned structure contains our BSO key
+            hits = response.get('hits', {}).get('hits', [])
+            if hits:
+                source = hits[0].get('_source', {}).get('oa_details', {})
+                if self.scanr_bso_version not in source:
+                    # The dynamically calculated BSO version is not found in the data, fallback to the previous year's version:
+                    old_version = self.scanr_bso_version
+                    fallback_year = datetime.now().year - 2
+                    self.scanr_bso_version = f"{fallback_year}Q4"
+                    logging.warning(
+                        f"The dynamically calculated BSO version {old_version} is not found in ScanR. "
+                        f"Switching to the fallback version : {self.scanr_bso_version}"
+                    )
+        except Exception as e:
+            logging.error(f"Impossible to validate BSO version with Elasticsearch : {e}")
 
     def get_all_ids_with_cursor(self, id_type = 'doi'):
         """Get all DOI articles using cursor pagination"""
@@ -366,6 +409,37 @@ class Biso(Dibisoplot):
 
         return res
 
+    def _handle_fetch_error(self, exception: Exception, context_msg: str ,return_bso_stats: bool = False, return_map_stats: bool=False, return_oaworks_stats: bool=False) -> dict[str, Any]:
+        """
+        Factorisation of error handling for data fetching methods.
+        Returns a standard error dictionary to be used in the application.
+        """
+        print(f"{context_msg}: {exception}")
+        traceback.print_exc()
+        self.data = None
+        self.data_status = DataStatus.ERROR
+        if return_bso_stats:
+            return {
+                'nb_works': self._("Error"),
+                'nb_works_found_in_bso': self._("Error"),
+                'nb_journals': self._("Error"),
+                'bso_version': self.scanr_bso_version,
+                'info': self._("Error")
+            }
+        if return_map_stats:
+            return {
+                'collaborations_nb': self._("Error"),
+                'institutions_nb': self._("Error"),
+                'countries_nb': self._("Error"),
+                'info': self._("Error")
+            }
+        if return_oaworks_stats:
+            return {
+                'oa_works_period': f"{self.year_range[0]} - {self.year_range[1]}",
+                'info': self._("Error")
+            }
+        return {'info': self._("Error")}
+
 
 class AnrProjects(Biso):
     """
@@ -421,13 +495,88 @@ class AnrProjects(Biso):
             self.generate_plot_info()
             return {"info": self.info}
         except Exception as e:
-            print(f"Error fetching or formatting data: {e}")
-            traceback.print_exc()
-            self.data = None
-            self.data_status = DataStatus.ERROR
-            return {"info": self._("Error")}
+            return self._handle_fetch_error(e, "Error fetching or formatting ANR projects data")
 
+# TODO : essayer de factoriser avec chapters (et autres si possible).
+class Books(Biso):
+    """
+    A class to fetch and generate a table of books (ouvrages).
+    """
 
+    figure_file_extension = "tex"
+    html_figure_type = "html_table"
+
+    def __init__(self, entity_id: str, year: int | None = None, **kwargs):
+        """
+        Initialize the Books class.
+        """
+        super().__init__(entity_id, year, **kwargs)
+
+    def fetch_data(self) -> dict[str, Any]:
+        """
+        Fetch data about books from the HAL API.
+        """
+        try:
+            # Request with docType_s:OUV for full books and authFullName_s for author names
+            url = (
+                f"https://api.archives-ouvertes.fr/search/{self.entity_id}/?q=*:*&fq=docType_s:OUV&"
+                f"fq=producedDateY_i:{self.year}&rows={self.max_plotted_entities}&wt=json&indent=true&"
+                f"fl=title_s,publisher_s,authFullName_s"
+            )
+            books = requests.get(url).json()
+            self.n_entities_found = books.get('response', {}).get('numFound', 0)
+            books = books.get('response', {}).get('docs', [])
+
+            if not books:
+                self.data_status = DataStatus.NO_DATA
+            else:
+                for i in range(len(books)):
+                    if 'title_s' not in books[i].keys():
+                        books[i]['title_s'] = ""
+                    else:
+                        books[i]['title_s'] = ' ; '.join(books[i]['title_s'])
+
+                    if 'publisher_s' not in books[i].keys():
+                        books[i]['publisher_s'] = ""
+                    else:
+                        books[i]['publisher_s'] = ' ; '.join(books[i]['publisher_s'])
+
+                    if 'authFullName_s' not in books[i].keys():
+                        books[i]['authFullName_s'] = ""
+                    else:
+                        books[i]['authFullName_s'] = ', '.join(books[i]['authFullName_s'])
+
+                self.data = pd.DataFrame.from_records(books)
+
+                self.data = self.data.rename(columns={
+                    "title_s": self._("Book title"),
+                    "authFullName_s": self._("Authors"),
+                    "publisher_s": self._("Publisher"),
+                })
+                self.data_status = DataStatus.OK
+            # hide_n_entities_warning as this information is already displayed on the table    
+            self.generate_plot_info(hide_n_entities_warning=True)
+            return {"info": self.info}
+        except Exception as e:
+            return self._handle_fetch_error(e, "Error fetching or formatting books data")
+
+    def get_figure(self) -> str:
+        """
+        Generate an HTML table of books.
+        """
+        if self.data_status == DataStatus.NOT_FETCHED:
+            self.fetch_data()
+        if self.data_status == DataStatus.NO_DATA:
+            return self.get_no_data_html()
+        if self.data_status == DataStatus.ERROR:
+            return self.get_error_html()
+
+        return self.dataframe_to_html_table(
+            self.data,
+            caption=self._("List of books entered in HAL"),
+            label="books",
+            max_plotted_entities=self.max_plotted_entities,
+        )
 
 class Chapters(Biso):
     """
@@ -499,11 +648,7 @@ class Chapters(Biso):
             self.generate_plot_info(hide_n_entities_warning=True)
             return {"info": self.info}
         except Exception as e:
-            print(f"Error fetching or formatting data: {e}")
-            traceback.print_exc()
-            self.data = None
-            self.data_status = DataStatus.ERROR
-            return {"info": self._("Error")}
+            return self._handle_fetch_error(e, "Error fetching or formatting chapters data")
 
 
     def get_figure(self) -> str:
@@ -526,7 +671,6 @@ class Chapters(Biso):
             label="chapters",
             max_plotted_entities=self.max_plotted_entities,
         )
-
 
 class CollaborationMap(Biso):
     """
@@ -756,17 +900,7 @@ class CollaborationMap(Biso):
 
             return stats
         except Exception as e:
-            print(f"Error fetching or formatting data: {e}")
-            traceback.print_exc()
-            self.data = None
-            self.data_status = DataStatus.ERROR
-            stats = {
-                'collaborations_nb': self._("Error"),
-                'institutions_nb': self._("Error"),
-                'countries_nb': self._("Error"),
-                'info': self._("Error")
-            }
-            return stats
+            return self._handle_fetch_error(e, "Error fetching or formatting collaboration maps data", return_map_stats=True)
 
 
 
@@ -983,11 +1117,7 @@ class CollaborationNames(Biso):
             self.generate_plot_info()
             return {"info": self.info}
         except Exception as e:
-            print(f"Error fetching or formatting data: {e}")
-            traceback.print_exc()
-            self.data = None
-            self.data_status = DataStatus.ERROR
-            return {"info": self._("Error")}
+            return self._handle_fetch_error(e, "Error fetching or formatting collaborations data")
 
 
 class Conferences(Biso):
@@ -1079,11 +1209,7 @@ class Conferences(Biso):
             self.generate_plot_info()
             return {"info": self.info}
         except Exception as e:
-            print(f"Error fetching or formatting data: {e}")
-            traceback.print_exc()
-            self.data = None
-            self.data_status = DataStatus.ERROR
-            return {"info": self._("Error")}
+            return self._handle_fetch_error(e, "Error fetching or formatting conferences data")
 
 class EuropeanProjects(Biso):
     """
@@ -1140,17 +1266,43 @@ class EuropeanProjects(Biso):
             self.generate_plot_info()
             return {"info": self.info}
         except Exception as e:
-            print(f"Error fetching or formatting data: {e}")
-            traceback.print_exc()
-            self.data = None
-            self.data_status = DataStatus.ERROR
-            return {"info": self._("Error")}
+            return self._handle_fetch_error(e, "Error fetching or formatting European projects data")
 
 
 class Journals(Biso):
     """
     A class to fetch and generate a table of journals.
     """
+
+    COLOR_RULES = [
+        {"oa_color": "green_only",     "is_oa": False, "journal_is_oa": False,  "has_apc": False,  "color_final": "closed"},
+        {"oa_color": "green_only",     "is_oa": False, "journal_is_oa": False,  "has_apc": True,  "color_final": "other"},
+        {"oa_color": "green_only",     "is_oa": False, "journal_is_oa": True,   "has_apc": False,  "color_final": "other"},
+        {"oa_color": "green_only",     "is_oa": False, "journal_is_oa": True,   "has_apc": True,  "color_final": "other"},
+        {"oa_color": "green_only",     "is_oa": False, "journal_is_oa": None,   "has_apc": False,  "color_final": "ambiguous_gold_hybrid"},
+        {"oa_color": "green_only",     "is_oa": False, "journal_is_oa": None,   "has_apc": True,  "color_final": "ambiguous_gold_hybrid"},
+        {"oa_color": "green_only",     "is_oa": True, "journal_is_oa": False,  "has_apc": False,  "color_final": "hybrid"},
+        {"oa_color": "green_only",     "is_oa": True, "journal_is_oa": False,  "has_apc": True,  "color_final": "hybrid"},
+        {"oa_color": "green_only",     "is_oa": True, "journal_is_oa": True,   "has_apc": False,  "color_final": "ambiguous_gold_diamond"},
+        {"oa_color": "green_only",     "is_oa": True, "journal_is_oa": True,   "has_apc": True,  "color_final": "gold"},
+        {"oa_color": "green_only",     "is_oa": True, "journal_is_oa": None,   "has_apc": False,  "color_final": "other"},
+        {"oa_color": "green_only",     "is_oa": True, "journal_is_oa": None,   "has_apc": True,  "color_final": "ambiguous_gold_hybrid"},
+        {"oa_color": "other",     "is_oa": False, "journal_is_oa": False,  "has_apc": False,  "color_final": "closed"},
+        {"oa_color": "other",     "is_oa": False, "journal_is_oa": False,  "has_apc": True,  "color_final": "other"}, # Useless, kept in case we determine a color for this configuration
+        {"oa_color": "other",     "is_oa": False, "journal_is_oa": True,   "has_apc": False,  "color_final": "other"}, # Useless, kept in case we determine a color for this configuration
+        {"oa_color": "other",     "is_oa": False, "journal_is_oa": True,   "has_apc": True,  "color_final": "other"}, # Useless, kept in case we determine a color for this configuration
+        {"oa_color": "other",     "is_oa": False, "journal_is_oa": None,   "has_apc": False,  "color_final": "ambiguous_gold_hybrid"},
+        {"oa_color": "other",     "is_oa": False, "journal_is_oa": None,   "has_apc": True,  "color_final": "ambiguous_gold_hybrid"},
+        {"oa_color": "other",     "is_oa": True, "journal_is_oa": False,  "has_apc": False,  "color_final": "hybrid"},
+        {"oa_color": "other",     "is_oa": True, "journal_is_oa": False,  "has_apc": True,  "color_final": "hybrid"},
+        {"oa_color": "other",     "is_oa": True, "journal_is_oa": True,   "has_apc": False,  "color_final": "ambiguous_gold_diamond"},
+        {"oa_color": "other",     "is_oa": True, "journal_is_oa": True,   "has_apc": True,  "color_final": "gold"},
+        {"oa_color": "other",     "is_oa": True, "journal_is_oa": None,   "has_apc": False,  "color_final": "other"}, # Useless, kept in case we determine a color for this configuration
+        {"oa_color": "other",     "is_oa": True, "journal_is_oa": None,   "has_apc": True,  "color_final": "ambiguous_gold_hybrid"},
+
+    ]
+
+    RESOLVE_COLORS = pd.DataFrame.from_records(COLOR_RULES)
 
     figure_file_extension = "tex"
     html_figure_type = "html_table"
@@ -1168,6 +1320,8 @@ class Journals(Biso):
         """
         super().__init__(entity_id, year, **kwargs)
 
+
+
     def fetch_data(self) -> dict[str, Any]:
         """
         Fetch data about journals from the API.
@@ -1175,31 +1329,39 @@ class Journals(Biso):
         :return: The info about the fetched data.
         :rtype: dict[str, Any]
         """
-        def format_bso_currency(currency):
-            if currency == 'USD':
-                return '$'
-            elif currency == 'EUR':
-                return '€'
-            elif currency == 'GBP':
-                return '£'
-            elif currency == 'JPY':
-                return '¥'
-            elif currency == 'CAD':
-                return 'CA$'
-            else:
-                return currency
 
         def format_apc(row):
-            if pd.notna(row['apc_paid_value']) and pd.notna(row['apc_paid_currency']):
-                return f"{int(row['apc_paid_value'])} {format_bso_currency(row['apc_paid_currency'])}"
-            elif pd.notna(row['apc_paid_value']):
-                return f"{int(row['apc_paid_value'])}"
-            return None
-
-        def format_is_oa_on_journal(row) -> str:
-            return get_oa_status_latex_emoji(row["is_oa_on_journal"])
+            if pd.notna(row['apc_paid_value_usd']):
+                return f"{int(row['apc_paid_value_usd'])}"
+            
+            # If value is missing, we need to check the other parameters
+            journal_color = row['oa_color']
+            # If the journal is diamond OA, we can assume that the APC is 0
+            if "D" in journal_color:
+                return "0"
+            # If the journal is closed, hybrid, or gold OA, we can assume that the APC is missing
+            return "?"
+        
+        def format_color(row) -> str:
+            color = row["color_final"] if pd.notna(row["color_final"]) else row["oa_color"]
+            # Check for missing values and handle lists
+            if pd.isna(color):
+                return "?"#"❓"
+            
+            mapping = {
+                "closed": "X",  # "❌"
+                "hybrid": "H",  # "🟤"
+                "gold": "Go",  # "🟡"
+                "diamond": "D",  # "💎"
+                "green_only": "Gro",  # "🟢"
+                "ambiguous_gold_hybrid": "G/H",
+                "ambiguous_gold_diamond": "G/D",
+                "other": "?"  # "❓"
+            }
+            return mapping.get(color, "?")
 
         def format_is_oa_on_repository(row) -> str:
+<<<<<<< HEAD
             return get_oa_status_latex_emoji(row["is_oa_on_repository"])
 
         def get_oa_status_latex_emoji(status) -> str:
@@ -1212,6 +1374,12 @@ class Journals(Biso):
                 return "✓"
             else:
                 return "✗"
+=======
+            status=row["is_oa_on_repository"]
+            if pd.isna(status) or not status:
+                return "X"#"❌"
+            return "O"#"✅"
+>>>>>>> c56de6e (Implementation of Books class and open access colors in Journals class (with decision table for scanr imprecision handling))
 
         try:
             if self.scanr_api_url is None:
@@ -1228,16 +1396,15 @@ class Journals(Biso):
             hal_ids = self.get_all_ids_with_cursor(id_type="hal")
             # format IDs for scanr:
             doi_ids = [f"doi{doi_id}" for doi_id in doi_ids]
-            # print("")
-            # print("doi_ids:", doi_ids)
             hal_ids = [f"hal{hal_id}" for hal_id in hal_ids]
             fields_to_retrieve = [
                 "journal_name",
                 "publisher",
-                f"oa_details.{self.scanr_bso_version}.oa_colors",
+                f"oa_details.{self.scanr_bso_version}.oa_colors_with_priority_to_publisher",
+                f"oa_details.{self.scanr_bso_version}.is_oa",
+                f"oa_details.{self.scanr_bso_version}.journal_is_oa",
+                "apc_paid.value_usd",
                 f"oa_details.{self.scanr_bso_version}.oa_host_type",
-                "apc_paid.currency",
-                "apc_paid.value"
             ]
             works = self.get_works_from_es_index_from_id_by_chunk(
                 self.scanr_bso_index,
@@ -1249,61 +1416,38 @@ class Journals(Biso):
             nb_found_works = len(works)
             print(f"Found {nb_found_works} works out of {nb_works}")
 
-            works = [
-                {
-                    "journal_name": work['_source'].get("journal_name"),
-                    "publisher": work['_source'].get("publisher"),
-                    "oa_colors": work['_source'].get("oa_details", {}).get(self.scanr_bso_version, {}).get("oa_colors"),
-                    "oa_host_type": work['_source'].get("oa_details", {}).get(self.scanr_bso_version, {}).get(
-                        "oa_host_type", "").split(";"),
-                    "apc_paid_currency": work['_source'].get("apc_paid", {}).get("currency"),
-                    "apc_paid_value": work['_source'].get("apc_paid", {}).get("value")
-                }
-                for work in works
-            ]
+            # Simplify extraction of BSO data from works
+            works_clean=[]
             for work in works:
-                oa_colors = work["oa_colors"].copy() if work["oa_colors"] is not None else []
-                oa_host_type = work["oa_host_type"].copy() if work["oa_host_type"] is not None else []
-                if "green" in oa_colors and "repository" in oa_host_type:
-                    work["is_oa_on_repository"] = True
-                    oa_colors.remove("green")
-                    oa_host_type.remove("repository")
-                if len(oa_colors) != len(oa_host_type):
-                    work["is_oa_on_journal"] = None
-                    warnings.warn(
-                        f"{len(oa_colors)} oa colors and {len(oa_host_type)} oa host type (unknown is_oa_on_journal) "
-                        f"for {work}"
-                    )
-                    continue
-                if len(oa_colors) > 1:
-                    work["is_oa_on_journal"] = None
-                    warnings.warn(f"{len(oa_colors)} oa colors and oa host type (unknown is_oa_on_journal) for {work}")
-                    continue
-                if len(oa_host_type) > 0:
-                    if oa_colors[0] == "closed":
-                        work["is_oa_on_journal"] = False
-                    elif oa_colors[0] in ["hybrid", "gold", "diamond"]:
-                        work["is_oa_on_journal"] = True
-                    else:
-                        work["is_oa_on_journal"] = None
-                        if oa_colors[0] != "other":
-                            warnings.warn(f"Unknown oa color {oa_colors[0]}")
+                source=work.get('_source', {})
+                bso_data=source.get("oa_details", {}).get(self.scanr_bso_version, {})
+                # Fetch unique paper color
+                journal_color=bso_data.get("oa_colors_with_priority_to_publisher")
+                if isinstance(journal_color, list):
+                    journal_color=journal_color[0] if len(journal_color)>0 else None
+                # Fetch and split host type
+                host_types_raw=bso_data.get("oa_host_type", "")
+                host_types=host_types_raw.split(";") if host_types_raw else []
 
+                # Determine if present in openaccess in repository (no need for green color if on repository)
+                is_on_repository="repository" in host_types
 
-            self.data = pd.DataFrame.from_records(
-                works,
-                columns=[
-                    "journal_name",
-                    "publisher",
-                    "oa_colors",
-                    "oa_host_type",
-                    "paid_apc",
-                    "apc_paid_value",
-                    "apc_paid_currency",
-                    "is_oa_on_journal",
-                    "is_oa_on_repository",
-                ]
-            )
+                works_clean.append({
+
+                    "journal_name": source.get("journal_name"),
+                    "publisher": source.get("publisher"),
+                    "oa_color": journal_color,
+                    "is_oa": bso_data.get("is_oa"),
+                    "journal_is_oa": bso_data.get("journal_is_oa"),
+                    "has_apc": pd.notna(source.get("apc_paid", {}).get("value_usd")),
+                    "apc_paid_value_usd": source.get("apc_paid", {}).get("value_usd"),
+                    "is_oa_on_repository": is_on_repository,
+                })
+            works=works_clean
+
+            self.data = pd.DataFrame.from_records(works)
+
+            self.data = self.data.merge(self.RESOLVE_COLORS, on=["oa_color", "is_oa", "journal_is_oa", "has_apc"], how="left")
 
             if len(self.data.index) == 0:
                 self.data_status = DataStatus.NO_DATA
@@ -1317,28 +1461,35 @@ class Journals(Biso):
                 }
                 return stats
 
-            self.data.drop(['oa_colors', 'oa_host_type'], axis=1, inplace=True)
-
             self.data['journal_name'] = self.data['journal_name'].fillna(self._("Unspecified journal"))
             self.data['publisher'] = self.data['publisher'].fillna(self._("Unspecified publisher"))
 
-            # # Fix data
-            # self.data['journal_name'] = [work.replace('&amp;', '&') for work in self.data['journal_name']]
-
-            # format APC values
+            # format values
+            self.data['oa_color'] = self.data.apply(format_color, axis=1)
             self.data['paid_apc'] = self.data.apply(format_apc, axis=1)
-            self.data.drop(['apc_paid_value', 'apc_paid_currency'], axis=1, inplace=True)
-            self.data['is_oa_on_journal'] = self.data.apply(format_is_oa_on_journal, axis=1)
+            self.data.drop(['apc_paid_value_usd'], axis=1, inplace=True)
             self.data['is_oa_on_repository'] = self.data.apply(format_is_oa_on_repository, axis=1)
 
             def merge_cells(group):
+                # Arrange APC string to count the number of works with APC found
+                is_apc_numeric = group['paid_apc'].notna() & (~group['paid_apc'].isin(['?']))
+                nb_apc_found = is_apc_numeric.sum()
+                nb_total_works = len(group)
+                apc_list = group['paid_apc'].dropna().tolist()
+
+
+                if apc_list:
+                    apc_str = f"{', '.join(apc_list)} ({nb_apc_found}/{nb_total_works})"
+                else:
+                    apc_str = f"({nb_apc_found}/{nb_total_works})"
+
                 merged_data = {
                     "journal_name": group.name,
                     "publisher": ' ; '.join(group['publisher'].dropna().unique()),
-                    "nb_works": len(group),
-                    "is_oa_on_journal": ' '.join(group['is_oa_on_journal']),
+                    "nb_works": nb_total_works,
+                    "oa_color": ' '.join(group['oa_color']),
                     "is_oa_on_repository": ' '.join(group['is_oa_on_repository']),
-                    "paid_apc": ', '.join(group['paid_apc'].dropna())
+                    "paid_apc": apc_str
                 }
                 return pd.Series(merged_data)
 
@@ -1373,18 +1524,7 @@ class Journals(Biso):
 
             return stats
         except Exception as e:
-            print(f"Error fetching or formatting data: {e}")
-            traceback.print_exc()
-            self.data = None
-            self.data_status = DataStatus.ERROR
-            stats = {
-                'nb_works': self._("Error"),
-                'nb_works_found_in_bso': self._("Error"),
-                'nb_journals': self._("Error"),
-                'bso_version': self.scanr_bso_version,
-                'info': self._("Error")
-            }
-            return stats
+            return self._handle_fetch_error(e, "Error fetching or formatting journals data", return_full_stats=True)
 
 
     def get_figure(self) -> str:
@@ -1406,9 +1546,9 @@ class Journals(Biso):
             "journal_name": self._("Journal"),
             "publisher": self._("Publisher"),
             "nb_works": self._("Number of works"),
-            "is_oa_on_journal": self._("Is open access on the journal"),
-            "is_oa_on_repository": self._("Is open access on a repository"),
-            "paid_apc": self._("Paid APC"),
+            "oa_color": self._("Access type on the journal"),
+            "is_oa_on_repository": self._("Open access on a repository"),
+            "paid_apc": self._("Paid APC $ (found/total works)"),
         })
 
         return self.dataframe_to_html_table(
@@ -1474,11 +1614,7 @@ class JournalsHal(Biso):
             self.generate_plot_info()
             return {"info": self.info}
         except Exception as e:
-            print(f"Error fetching or formatting data: {e}")
-            traceback.print_exc()
-            self.data = None
-            self.data_status = DataStatus.ERROR
-            return {"info": self._("Error")}
+            return self._handle_fetch_error(e, "Error fetching or formatting Hal journals data")
 
 
 class OpenAccessWorks(Biso):
@@ -1606,15 +1742,7 @@ class OpenAccessWorks(Biso):
             }
             return stats
         except Exception as e:
-            print(f"Error fetching or formatting data: {e}")
-            traceback.print_exc()
-            self.data = None
-            self.data_status = DataStatus.ERROR
-            stats = {
-                'oa_works_period': f"{self.year_range[0]} - {self.year_range[1]}",
-                'info': self._("Error")
-            }
-            return stats
+            return self._handle_fetch_error(e, "Error fetching or formatting open access works data", return_oaworks_stats=True)
 
 
     def get_figure(self) -> go.Figure:
@@ -1798,11 +1926,7 @@ class PrivateSectorCollaborations(Biso):
             return {"info": self.info}
 
         except Exception as e:
-            print(f"Error fetching or formatting data: {e}")
-            traceback.print_exc()
-            self.data = None
-            self.data_status = DataStatus.ERROR
-            return {"info": self._("Error")}
+            return self._handle_fetch_error(e, "Error fetching or formatting private sector collaborations data")
 
 
 class WorksBibtex(Biso):
@@ -1879,11 +2003,7 @@ class WorksBibtex(Biso):
             self.generate_plot_info()
             return {"info": self.info}
         except Exception as e:
-            logging.error(f"Error fetching HAL bibtex data: {e}")
-            traceback.print_exc()
-            self.data = None
-            self.data_status = DataStatus.ERROR
-            return {"info": self._("Error")}
+            return self._handle_fetch_error(e, "Error fetching or formatting Hal Bibtex data")
 
 
     def get_figure(self) -> str:
@@ -1974,8 +2094,4 @@ class WorksType(Biso):
             self.generate_plot_info()
             return {"info": self.info}
         except Exception as e:
-            print(f"Error fetching or formatting data: {e}")
-            traceback.print_exc()
-            self.data = None
-            self.data_status = DataStatus.ERROR
-            return {"info": self._("Error")}
+            return self._handle_fetch_error(e, "Error fetching or formatting work types data")

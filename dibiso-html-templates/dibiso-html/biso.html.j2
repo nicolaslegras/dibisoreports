@@ -17,6 +17,7 @@
   <li><a href="#introduction">Introduction</a></li>
   {% if figures.journals_hal is defined and 'journals_hal' not in removed_sections %}<li><a href="#journals-hal">Liste des revues</a></li>{% endif %}
   {% if figures.conferences is defined and 'conferences' not in removed_sections %}<li><a href="#conferences">Liste des conférences</a></li>{% endif %}
+  {% if figures.books is defined %}<li><a href="#books">Liste des ouvrages</a></li>{% endif %}
   {% if figures.chapters is defined and 'chapters' not in removed_sections %}<li><a href="#chapters">Liste des chapitres</a></li>{% endif %}
   {% if figures.works_type is defined and 'works_type' not in removed_sections %}<li><a href="#works-type">Typologie de la production scientifique</a></li>{% endif %}
   {% if figures.open_access_works is defined and 'open_access_works' not in removed_sections %}<li><a href="#open-access-works">Articles en accès ouvert</a></li>{% endif %}
@@ -77,6 +78,18 @@
 </section>
 {% endif %}
 
+{# ── 4. Liste des ouvrages ───────────────────────────────────── #}
+{% if figures.books is defined %}
+<section id="books">
+  <h2>Liste des ouvrages</h2>
+  {{ figures.books | safe }}
+  {% if booksinfo is defined and booksinfo %}<p class="dibiso-info">{{ booksinfo }}</p>{% endif %}
+  {% if analyses.books is defined and analyses.books %}
+  <div class="analysis">{{ analyses.books | safe }}</div>
+  {% endif %}
+</section>
+{% endif %}
+
 {# ── 4. Liste des chapitres ──────────────────────────────────── #}
 {% if figures.chapters is defined and 'chapters' not in removed_sections %}
 <section id="chapters" data-section="chapters">
@@ -127,6 +140,17 @@
   <p>Ce tableau utilise des données du Baromètre français de la Science Ouverte. Ces données sont compilées le dernier trimestre de chaque année (généralement en décembre), sur les données de l'année précédente. Ainsi, le tableau montre le nombre de publications en accès ouvert lors du trimestre {{ reportyear | default('') }}Q4.</p>
   {% if bsojournalsnbworks is defined and bsojournalsnbworksfoundinbso is defined and bsojournalsnbworks and bsojournalsnbworksfoundinbso %}<p>Il existe généralement un déficit de couverture d'environ 30&nbsp;% par rapport à HAL&nbsp;: sur {{ bsojournalsnbworks }} travaux dans HAL, {{ bsojournalsnbworksfoundinbso }} ont été trouvées dans le BSO.</p>{% endif %}
   <p>La colonne « APC payés » indique le montant de frais APC détecté comme payé par le BSO. Comme toute donnée collectée à travers de multiples sources hétérogènes, certaines données peuvent être manquantes ou inexactes, mais permettent néanmoins d'avoir un aperçu général de l'ouverture de la production scientifique.</p>
+  
+  <p>
+    <strong>Légende :</strong> 
+    D = Diamond | 
+    Go = Gold | 
+    H = Hybrid | 
+    Gr = Green (Archive) | 
+    X = Pas d'accès | 
+    ? = Autre
+  </p>                                                        
+  
   {{ figures.journals | safe }}
   {% if journalsinfo is defined and journalsinfo %}<p class="dibiso-info">{{ journalsinfo }}</p>{% endif %}
   {% if analyses.journals is defined and analyses.journals %}

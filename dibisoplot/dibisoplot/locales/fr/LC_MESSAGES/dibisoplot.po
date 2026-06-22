@@ -165,16 +165,16 @@ msgid "Number of works"
 msgstr "Nombre de travaux"
 
 #: biso/biso.py:1857
-msgid "Is open access on the journal"
-msgstr "Est en accès ouvert sur le journal"
+msgid "Access type on the journal"
+msgstr "Type d'accès sur le journal"
 
 #: biso/biso.py:1858
-msgid "Is open access on a repository"
-msgstr "Est en accès ouvert sur une archive"
+msgid "Open access on a repository"
+msgstr "Accès ouvert sur une archive"
 
 #: biso/biso.py:1859
-msgid "Paid APC"
-msgstr "APC payés"
+msgid "Paid APC $ (found/total works)"
+msgstr "APC payés $ (trouvés/total travaux)"
 
 #: biso/biso.py:1865
 msgid "List of journals, publishers, open access status and paid APC"
@@ -203,3 +203,15 @@ msgstr "Erreur lors de la création de la bibliographie"
 
 #~ msgid "Chapters list"
 #~ msgstr "Liste des chapitres"
+
+#: biso/biso.py:925
+msgid "Authors"
+msgstr "Auteurs"
+
+#: biso/biso.py:932
+msgid "Titre de l'ouvrage"
+msgstr "Titre de l'ouvrage"
+
+#: biso/biso.py:965
+msgid "List of books entered in HAL"
+msgstr "Liste des ouvrages renseignés dans HAL"
