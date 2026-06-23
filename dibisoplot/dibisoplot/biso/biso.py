@@ -1203,12 +1203,15 @@ class Journals(Biso):
             return get_oa_status_latex_emoji(row["is_oa_on_repository"])
 
         def get_oa_status_latex_emoji(status) -> str:
+            # Plain text-presentation glyphs, not color emoji (✅❌❓): WeasyPrint renders
+            # color/bitmap emoji (Noto Color Emoji) at the wrong scale, producing tiny,
+            # clipped icons in the PDF. These render as normal vector glyphs in any font.
             if pd.isna(status):
-                return "❓"
+                return "?"
             elif status:
-                return "✅"
+                return "✓"
             else:
-                return "❌"
+                return "✗"
 
         try:
             if self.scanr_api_url is None:
