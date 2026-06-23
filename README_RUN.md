@@ -29,14 +29,12 @@ dibisoreports/
 │   │   ├── main.py          ← Point d'entrée API
 │   │   ├── auth.py          ← JWT authentification
 │   │   └── users.py         ← Gestion utilisateurs (SQLite)
-│   ├── docker-compose.yml   ← Compose autonome (usage avancé)
 │   ├── Dockerfile
-│   └── .env.template
+│   └── .env.template        ← Config développement local uniquement (sans Docker)
 ├── dibiso-reporting-webapp/ ← React frontend
 │   ├── src/App.jsx          ← Composant unique
-│   ├── docker-compose.yml   ← Compose autonome (usage avancé)
 │   ├── Dockerfile
-│   └── .env.template
+│   └── .env.template        ← Config développement local uniquement (sans Docker)
 ├── dibisoreporting/         ← Bibliothèque Python locale
 └── dibisoplot/              ← Bibliothèque Python locale
 ```
@@ -87,6 +85,13 @@ docker compose up -d --build
 
 Les deux services démarrent ensemble. Le frontend attend que le healthcheck de l'API
 soit passé avant de démarrer.
+
+Pour ne reconstruire qu'un seul service (ex. après une modification Python) :
+
+```bash
+docker compose build --no-cache api
+docker compose up -d api
+```
 
 - Interface : **http://localhost:8080** (ou `WEBAPP_PORT`)
 - API : **http://localhost:8000** (ou `API_PORT`)
