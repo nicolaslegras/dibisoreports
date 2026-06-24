@@ -63,18 +63,27 @@ React Webapp  →  FastAPI  →  background thread:
                                1. fetch data (HAL / OpenAlex / ScanR APIs)
                                2. dibisoplot  → Plotly figures (SVG files)
                                3. dibisoreporting → Jinja2 HTML rendering
-                                  (saves figures.json + context.json)
+                                  (saves figures.json + context.json + inlined HTML for preview)
                              ↓
-                          render_html_to_pdf():
-                               WeasyPrint → report.pdf + biblio.pdf
-                               PyMuPDF (optional) → background overlay
+                          results page: Report PDF / Bibliography PDF / Export ZIP cards
+                          (all three available immediately, each rendered on click)
+                             ↓
+                          GET /download-pdf?file_name=report|biblio
+                            → render_from_saved() + WeasyPrint for that one file only
+                          POST /export → render_from_saved() + WeasyPrint for both files
+                                          + ZIP of the whole project (PyMuPDF optional background overlay)
                              ↓
                           PDF/ZIP download via authenticated endpoint
 ```
 
-Reports have two statuses after generation:
-- `completed` — PDF + ZIP both available
-- `partial` — PDF failed (e.g. GTK/WeasyPrint missing on Windows), ZIP still available
+WeasyPrint is never invoked during the initial background compilation — only HTML
+(for the edit view) and a ZIP of the raw project are produced there. Each of the three
+download buttons triggers its own render: `/download-pdf` re-renders and produces just
+the requested PDF, `/export` re-renders and produces both PDFs plus the bundled ZIP.
+Each click re-renders from the latest saved analyses, so edits are always reflected.
+
+Reports have a single success status (`completed`) once data fetching + HTML rendering
+succeed. `failed` covers data/HTML errors.
 
 ### Key class hierarchy
 
@@ -106,8 +115,9 @@ Reports have two statuses after generation:
   - `GET /report-sections/{comp_id}` — list editable sections after generation
   - `GET/PUT /analyses/{comp_id}/{section_id}` — load/save per-section Markdown analyses
   - `GET /figures/{comp_id}/{figure_name}` — serve SVG figure for editor preview
-  - `POST /export/{comp_id}` — re-render HTML with analyses + produce PDF+ZIP
-  - `GET /download-pdf`, `GET /download-zip`, `GET /download-html` — download outputs
+  - `POST /export/{comp_id}` — re-render HTML with analyses + produce PDF+ZIP (backs the "Export ZIP" button)
+  - `GET /download-pdf?temp_id={comp_id}&file_name=report|biblio` — re-render with analyses + produce just that PDF, then download it (backs the "Report PDF" / "Bibliography PDF" buttons)
+  - `GET /download-zip`, `GET /download-html` — download already-produced outputs
   - `GET /template-assets/{file_path}` — serve CSS/image assets from the HTML template (public, restricted to `css/` and `assets/`)
 
 **React frontend** (`dibiso-reporting-webapp/src/App.jsx`)

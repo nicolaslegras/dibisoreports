@@ -1069,29 +1069,6 @@ const ReportGeneratorInterface = () => {
     return () => window.removeEventListener('message', handler);
   }, [editMode, compilationId, token]);
 
-  // Poll export status after leaving edit mode so isExporting clears when done
-  useEffect(() => {
-    if (!isExporting || editMode || !compilationId) return;
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/compilation-status/${compilationId}`, {
-          headers: { 'Authorization': `Bearer ${token}` },
-        });
-        const s = await res.json();
-        if (s.export_status === 'done' || s.export_status === 'failed') {
-          if (!cancelled) setIsExporting(false);
-        } else {
-          if (!cancelled) setTimeout(poll, 1000);
-        }
-      } catch {
-        if (!cancelled) setIsExporting(false);
-      }
-    };
-    setTimeout(poll, 1000);
-    return () => { cancelled = true; };
-  }, [isExporting, editMode, compilationId]);
-
   // ─────────────────────────────────────────────────────────────────────
 
   const handleExportZip = async () => {
@@ -1303,13 +1280,6 @@ const ReportGeneratorInterface = () => {
             <LangToggle />
             <button
               onClick={() => {
-                if (compilationId) {
-                  fetch(`${API_BASE_URL}/export/${compilationId}`, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${token}` },
-                  }).catch(() => {});
-                  setIsExporting(true);
-                }
                 setEditMode(false);
                 setReportPreviewHtml('');
               }}
@@ -2083,7 +2053,7 @@ const ReportGeneratorInterface = () => {
                 </h3>
                 <div className="grid md:grid-cols-3 gap-4 mb-6">
                   {/* Report PDF Download - Only show if compilation was completed */}
-                  {compilationResult.status === 'completed' && (compilationResult.pdf_available !== false) && (
+                  {compilationResult.status === 'completed' && (
                     <div className="bg-gray-700 p-6 rounded-lg border border-gray-600 flex flex-col">
                       <div className="flex items-center mb-3">
                         <FileText className="w-6 h-6 text-red-500 mr-2" />
@@ -2113,7 +2083,7 @@ const ReportGeneratorInterface = () => {
                   )}
 
                   {/* Bibliography PDF Download - Only show if compilation was completed */}
-                  {compilationResult.status === 'completed' && (compilationResult.pdf_available !== false) && (
+                  {compilationResult.status === 'completed' && (
                     <div className="bg-gray-700 p-6 rounded-lg border border-gray-600 flex flex-col">
                       <div className="flex items-center mb-3">
                         <FileText className="w-6 h-6 text-blue-500 mr-2" />

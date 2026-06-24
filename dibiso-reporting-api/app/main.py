@@ -667,19 +667,20 @@ def apply_background_to_pdf(pdf_path: Path, background_pdf_path: Path) -> None:
         logger.error(f"Background overlay failed for {pdf_path}: {e}")
 
 
-def render_html_to_pdf(project_dir: Path, output_dir: Path, comp_id: str) -> list[Optional[Path]]:
+def render_html(project_dir: Path, output_dir: Path, comp_id: str) -> bool:
     """
-    Render report.html / biblio.html → PDF via WeasyPrint.
-    Returns [report_pdf_path_or_None, biblio_pdf_path_or_None].
+    Render report.html / biblio.html via Jinja2 and inline their CSS/assets into
+    output_dir so the editor preview (/download-html) can serve self-contained files.
+    PDF generation is deferred to the explicit /export step (WeasyPrint is not invoked here).
     """
     with compilation_lock:
         if compilation_status.get(comp_id, {}).get('status') == 'cancelled':
-            return [None, None]
+            return False
 
     from dibisoreporting import DibisoReporting
     import markdown
 
-    update_compilation_status(comp_id, 72, "Rendering HTML report...")
+    update_compilation_status(comp_id, 80, "Rendering HTML report...")
 
     # Load analyses from DB and convert Markdown → HTML
     user_id = compilation_status[comp_id].get('user_id')
@@ -691,53 +692,16 @@ def render_html_to_pdf(project_dir: Path, output_dir: Path, comp_id: str) -> lis
     except Exception as e:
         logger.error(f"Jinja2 render failed for {comp_id}: {e}")
         update_compilation_status(comp_id, 0, f"Report rendering failed: {e}", "failed")
-        return [None, None]
-
-    try:
-        from weasyprint import HTML as WeasyprintHTML
-    except OSError as e:
-        logger.warning(f"WeasyPrint unavailable (missing system library: {e}). "
-                       "HTML files will be available but no PDF will be generated. "
-                       "Install the GTK3 runtime (see README_RUN.md) to enable PDF export.")
-        # Inline CSS/assets so the HTML is self-contained for the webapp preview and ZIP
-        _tsubdir = _get_template_subdir(project_dir)
-        for name in ("report", "biblio"):
-            html_path = project_dir / f"{name}.html"
-            if html_path.exists():
-                inlined = _inline_assets_in_html(html_path.read_text(encoding="utf-8"), project_dir, _tsubdir)
-                (output_dir / f"{name}.html").write_text(inlined, encoding="utf-8")
-        return [None, None]
+        return False
 
     _tsubdir = _get_template_subdir(project_dir)
-    results = []
-    for name, progress in [("report", 80), ("biblio", 88)]:
+    for name in ("report", "biblio"):
         html_path = project_dir / f"{name}.html"
-        if not html_path.exists():
-            results.append(None)
-            continue
-        with compilation_lock:
-            if compilation_status.get(comp_id, {}).get('status') == 'cancelled':
-                return [None, None]
-        update_compilation_status(comp_id, progress, f"Converting {name}.html to PDF...")
-        try:
-            pdf_path = output_dir / f"{name}.pdf"
-            # Inline CSS/assets before WeasyPrint: CSS lives in project_dir/{template_subdir}/css/
-            # but the HTML references it as css/base.css (relative to project_dir root), so
-            # WeasyPrint can't resolve it via filename=. Inlining also makes output_dir/report.html
-            # self-contained so the webapp preview renders correctly on the first load.
+        if html_path.exists():
             inlined = _inline_assets_in_html(html_path.read_text(encoding="utf-8"), project_dir, _tsubdir)
-            inlined_html_path = output_dir / f"{name}.html"
-            inlined_html_path.write_text(inlined, encoding="utf-8")
-            WeasyprintHTML(filename=str(inlined_html_path)).write_pdf(str(pdf_path), presentational_hints=True)
-            if html_template_path:
-                bg_path = Path(html_template_path) / _tsubdir / "assets" / "background.pdf"
-                apply_background_to_pdf(pdf_path, bg_path)
-            results.append(pdf_path)
-        except Exception as e:
-            logger.error(f"WeasyPrint failed for {name}: {e}")
-            results.append(None)
+            (output_dir / f"{name}.html").write_text(inlined, encoding="utf-8")
 
-    return results
+    return True
 
 
 def create_zip_archive(project_folder: Path, zip_path: Path) -> bool:
@@ -1006,9 +970,10 @@ def run_compilation(comp_id: str, request_data: ReportRequest):
         # Create temporary directory for outputs
         temp_dir = Path(tempfile.mkdtemp(prefix="html_output_"))
 
-        # Render HTML → PDF via WeasyPrint
+        # Render HTML for the editor preview. PDF generation is deferred until the
+        # user explicitly exports, so WeasyPrint is not invoked here.
         logger.info(f"Rendering HTML report for {comp_id} in {project_folder}")
-        pdf_paths = render_html_to_pdf(project_folder, temp_dir, comp_id)
+        html_rendered = render_html(project_folder, temp_dir, comp_id)
 
         # Check for cancellation before creating ZIP
         with compilation_lock:
@@ -1019,7 +984,7 @@ def run_compilation(comp_id: str, request_data: ReportRequest):
 
         update_compilation_status(comp_id, 98, "Creating ZIP archive...")
 
-        # Create ZIP archive (always, even if PDF compilation failed)
+        # Create ZIP archive of the project files
         zip_path = temp_dir / "project.zip"
         logger.info(f"Creating ZIP archive at {zip_path} for {comp_id}")
 
@@ -1030,9 +995,7 @@ def run_compilation(comp_id: str, request_data: ReportRequest):
             cleanup_directories(project_folder, temp_dir)
             return
 
-        # render_html_to_pdf writes PDFs directly into temp_dir, so pdf_paths already
-        # point to temp_dir/report.pdf and temp_dir/biblio.pdf — no copy needed.
-        compilation_successful = None not in pdf_paths
+        compilation_successful = html_rendered
 
         # Keep project_folder alive for the session so /report-sections and /figures
         # endpoints can serve figure previews and section metadata to the edit view.
@@ -1050,10 +1013,10 @@ def run_compilation(comp_id: str, request_data: ReportRequest):
                         logger.error(f"Error cleaning up temp dir: {e}")
                 return
 
-            # Mark as completed or partial success
+            # render_html already set status to 'failed' on a Jinja2 render error,
+            # so reaching here with status still 'running' means it succeeded.
             if compilation_status.get(comp_id, {}).get('status') == 'running':
                 if compilation_successful:
-                    # Full success
                     compilation_status[comp_id].update({
                         'progress': 100,
                         'current_step': 'Compilation completed successfully!',
@@ -1064,23 +1027,6 @@ def run_compilation(comp_id: str, request_data: ReportRequest):
                             'pdf_url': '/download-pdf',
                             'zip_url': '/download-zip',
                             'compilation_id': comp_id
-                        },
-                        'temp_dir': str(temp_dir),
-                        'last_updated': datetime.now()
-                    })
-                else:
-                    # Partial success - data and ZIP available, but PDF compilation failed
-                    compilation_status[comp_id].update({
-                        'progress': 100,
-                        'current_step': 'PDF generation failed, but project files are available',
-                        'status': 'partial',
-                        'result': {
-                            'message': f'Data fetched for {request_data.entity_acronym} ({request_data.year}), '
-                                       f'but PDF generation failed. You can download the project files.',
-                            'pdf_url': None,
-                            'zip_url': '/download-zip',
-                            'compilation_id': comp_id,
-                            'warning': 'PDF generation failed. Download the ZIP to open the HTML report in a browser.'
                         },
                         'temp_dir': str(temp_dir),
                         'last_updated': datetime.now()
@@ -1392,6 +1338,38 @@ def _inline_assets_in_html(html_content: str, project_dir: Path, template_subdir
     return html_content
 
 
+def _render_pdf(project_dir: Path, output_dir: Path, comp_id: str, name: str) -> Optional[Path]:
+    """
+    Re-render report.html/biblio.html with current analyses, then produce just
+    {name}.pdf via WeasyPrint. Runs synchronously in a worker thread, on demand,
+    when the user clicks the corresponding "Report PDF" / "Bibliography PDF" button.
+    """
+    import markdown as md_lib
+    from dibisoreporting import DibisoReporting
+    from weasyprint import HTML as WeasyprintHTML
+
+    user_id = compilation_status.get(comp_id, {}).get('user_id')
+    raw_analyses = get_analyses(comp_id, user_id) if user_id else {}
+    analyses_html = {k: md_lib.markdown(v) for k, v in raw_analyses.items() if v}
+    DibisoReporting.render_from_saved(str(project_dir), analyses_html)
+
+    html_path = project_dir / f"{name}.html"
+    if not html_path.exists():
+        return None
+
+    _tsubdir = _get_template_subdir(project_dir)
+    inlined = _inline_assets_in_html(html_path.read_text(encoding="utf-8"), project_dir, _tsubdir)
+    inlined_html_path = output_dir / f"{name}.html"
+    inlined_html_path.write_text(inlined, encoding="utf-8")
+
+    pdf_path = output_dir / f"{name}.pdf"
+    WeasyprintHTML(filename=str(inlined_html_path)).write_pdf(str(pdf_path), presentational_hints=True)
+    if html_template_path:
+        bg_path = Path(html_template_path) / _tsubdir / "assets" / "background.pdf"
+        apply_background_to_pdf(pdf_path, bg_path)
+    return pdf_path
+
+
 def _do_export(comp_id: str, user_id: int, project_dir: Path, output_dir: Path):
     """Background export task: render Jinja2 → HTML (always), then WeasyPrint → PDF (if GTK available)."""
     import markdown as md_lib
@@ -1695,7 +1673,6 @@ def _do_upload_render(project_dir: Path, raw_analyses: dict, user_id: int, conte
                 'pdf_url': None,
                 'zip_url': None,
                 'compilation_id': comp_id,
-                'pdf_available': False,
             },
             'project_dir': str(project_dir),
             'temp_dir': str(output_dir),
@@ -1835,9 +1812,38 @@ async def download_pdf(
     file_name: str,
     current_user: Annotated[dict, Depends(get_current_active_user)]
 ):
-    """Download the generated PDF file. Requires authentication."""
-    pdf_path = verify_and_get_file_path(temp_id, current_user, file_name + ".pdf")
-    
+    """
+    Render report.pdf or biblio.pdf on demand (with current analyses) via WeasyPrint,
+    then download it. Each click re-renders, so edits made since the last download
+    are always reflected.
+    """
+    if file_name not in ("report", "biblio"):
+        raise HTTPException(status_code=400, detail="file_name must be 'report' or 'biblio'")
+
+    project_dir = _get_comp_project_dir(temp_id, current_user)
+    with compilation_lock:
+        status = compilation_status.get(temp_id)
+        temp_dir_str = status.get('temp_dir') if status else None
+    temp_dir = Path(temp_dir_str) if temp_dir_str else Path(tempfile.mkdtemp(prefix="html_output_"))
+
+    loop = asyncio.get_event_loop()
+    try:
+        pdf_path = await loop.run_in_executor(
+            thread_pool, _render_pdf, project_dir, temp_dir, temp_id, file_name
+        )
+    except OSError as e:
+        raise HTTPException(status_code=503, detail=f"PDF rendering unavailable (WeasyPrint/GTK missing): {e}")
+    except Exception as e:
+        logger.error(f"PDF render failed for {temp_id}/{file_name}: {e}")
+        raise HTTPException(status_code=500, detail="PDF rendering failed")
+
+    if pdf_path is None:
+        raise HTTPException(status_code=404, detail=f"{file_name}.html not found")
+
+    with compilation_lock:
+        if temp_id in compilation_status:
+            compilation_status[temp_id]['temp_dir'] = str(temp_dir)
+
     return FileResponse(
         path=pdf_path,
         filename=file_name,
