@@ -179,13 +179,14 @@ class DibisoReporting:
     # ── Deferred HTML rendering ─────────────────────────────────────────
 
     @classmethod
-    def render_from_saved(cls, root_path: str, analyses: dict[str, str]) -> None:
+    def render_from_saved(cls, root_path: str, analyses: dict[str, str], removed_sections: list[str] | None = None) -> None:
         """
         Re-render the HTML report from saved figures.json + context.json,
         injecting user-written analyses (already converted to HTML).
 
         :param root_path: Directory containing figures.json, context.json and the dibiso-html/ template dir.
         :param analyses: Dict mapping section_id to HTML string (Markdown pre-rendered server-side).
+        :param removed_sections: List of section_ids the user chose to hide from the rendered report.
         """
         from jinja2 import Environment, FileSystemLoader
 
@@ -217,6 +218,7 @@ class DibisoReporting:
 
         context["figures"] = figures
         context["analyses"] = analyses
+        context["removed_sections"] = list(removed_sections or [])
         context["has_plotly_figures"] = False  # SVG path: no Plotly JS needed
 
         template_dir = join(root_path, context.get("template_subdir", "dibiso-html"))

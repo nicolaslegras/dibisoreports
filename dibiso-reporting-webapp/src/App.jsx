@@ -125,6 +125,10 @@ const TRANSLATIONS = {
     iframeEditorPlaceholder: "Write your analysis here (Markdown supported)…",
     iframeEditing: "Editing…",
     iframeSaved: "✓ Saved",
+    iframeRemoveSection: "Remove section",
+    iframeRestoreSection: "Restore section",
+    iframeSectionRemovedNotice: "This section has been removed from the report.",
+    iframeLastSectionWarning: "At least one section must remain visible.",
 
     instructionsText: "Currently, you can generate an open-science report from an HAL collection. This web application is used to create the BiSO at the Université Paris-Saclay. BiSO stands for Bilan de la Science Ouverte (open-science report).",
     howItWorks: "How it works:",
@@ -278,6 +282,10 @@ const TRANSLATIONS = {
     iframeEditorPlaceholder: "Rédigez votre analyse ici (Markdown supporté)…",
     iframeEditing: "Modification…",
     iframeSaved: "✓ Sauvegardé",
+    iframeRemoveSection: "Retirer la section",
+    iframeRestoreSection: "Rétablir la section",
+    iframeSectionRemovedNotice: "Cette section a été retirée du rapport.",
+    iframeLastSectionWarning: "Au moins une section doit rester visible.",
 
     instructionsText: "Vous pouvez générer un bilan de science ouverte à partir d'une collection HAL. Cette application est utilisée pour créer le BiSO à l'Université Paris-Saclay. BiSO signifie Bilan de la Science Ouverte.",
     howItWorks: "Comment ça marche :",
@@ -789,6 +797,16 @@ const ReportGeneratorInterface = () => {
     }
   };
 
+  // Fetch the editable section list (with current removed state) and saved analyses for a report
+  const loadSectionsAndAnalyses = async (compId) => {
+    const [secRes, anaRes] = await Promise.all([
+      fetch(`${API_BASE_URL}/report-sections/${compId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
+      fetch(`${API_BASE_URL}/analyses/${compId}`,         { headers: { 'Authorization': `Bearer ${token}` } }),
+    ]);
+    if (secRes.ok) setSections(await secRes.json());
+    if (anaRes.ok) setAnalyses(await anaRes.json());
+  };
+
   const pollCompilationStatus = async (compId) => {
     try {
       const response = await fetch(`${API_BASE_URL}/compilation-status/${compId}`, {
@@ -814,12 +832,7 @@ const ReportGeneratorInterface = () => {
 
           // Load sections and existing analyses, then enter edit mode
           try {
-            const [secRes, anaRes] = await Promise.all([
-              fetch(`${API_BASE_URL}/report-sections/${compId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
-              fetch(`${API_BASE_URL}/analyses/${compId}`,         { headers: { 'Authorization': `Bearer ${token}` } }),
-            ]);
-            if (secRes.ok) setSections(await secRes.json());
-            if (anaRes.ok) setAnalyses(await anaRes.json());
+            await loadSectionsAndAnalyses(compId);
             setEditMode(true);
           } catch (e) {
             console.error('Failed to load sections/analyses:', e);
@@ -860,12 +873,7 @@ const ReportGeneratorInterface = () => {
         }
         // Figures and data are available even in partial mode — enter edit mode
         try {
-          const [secRes, anaRes] = await Promise.all([
-            fetch(`${API_BASE_URL}/report-sections/${compId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
-            fetch(`${API_BASE_URL}/analyses/${compId}`,         { headers: { 'Authorization': `Bearer ${token}` } }),
-          ]);
-          if (secRes.ok) setSections(await secRes.json());
-          if (anaRes.ok) setAnalyses(await anaRes.json());
+          await loadSectionsAndAnalyses(compId);
           setEditMode(true);
         } catch (e) {
           console.error('Failed to load sections/analyses for partial report:', e);
@@ -936,7 +944,7 @@ const ReportGeneratorInterface = () => {
 
   // ── Edit Report: build iframe srcdoc with inline editors ─────────────
 
-  function buildEditorHtml(rawHtml, currentAnalyses, apiBase, editorTr) {
+  function buildEditorHtml(rawHtml, currentAnalyses, apiBase, editorTr, removedMap) {
     // Asset images (logos) can use absolute API URLs — they don't have CORS issues for <img>
     let html = rawHtml
       .replace(/src="assets\//g, `src="${apiBase}/template-assets/assets/`);
@@ -946,6 +954,10 @@ const ReportGeneratorInterface = () => {
       placeholder: editorTr.iframeEditorPlaceholder,
       editing: editorTr.iframeEditing,
       saved: editorTr.iframeSaved,
+      remove: editorTr.iframeRemoveSection,
+      restore: editorTr.iframeRestoreSection,
+      removedNotice: editorTr.iframeSectionRemovedNotice,
+      lastSectionWarning: editorTr.iframeLastSectionWarning,
     });
 
     const editorScript = `
@@ -953,6 +965,7 @@ const ReportGeneratorInterface = () => {
 (function() {
   var i18n = ${i18nJson};
   var analyses = ${JSON.stringify(currentAnalyses)};
+  var removedMap = ${JSON.stringify(removedMap || {})};
 
   function buildEditor(sectionId, currentValue) {
     var wrapper = document.createElement('div');
@@ -991,10 +1004,40 @@ const ReportGeneratorInterface = () => {
     return wrapper;
   }
 
-  document.querySelectorAll('section[id]').forEach(function(section) {
-    var sectionId = section.id.replace(/-/g, '_');
-    var editor = buildEditor(sectionId, analyses[sectionId] || '');
+  // ── Section remove/restore: visually separate each section into a card
+  // with a toggle button; removing collapses the body behind a small banner. ──
+  var entries = [];
 
+  function applyState(entry, removed) {
+    entry.removed = removed;
+    entry.section.style.opacity = removed ? '0.5' : '1';
+    entry.body.style.display = removed ? 'none' : '';
+    entry.notice.style.display = removed ? 'block' : 'none';
+    entry.btn.textContent = removed ? i18n.restore : i18n.remove;
+    entry.btn.style.background = removed ? '#fff' : '#fef2f2';
+    entry.btn.style.color = removed ? '#374151' : '#b91c1c';
+    entry.btn.style.borderColor = removed ? '#d1d5db' : '#fca5a5';
+  }
+
+  function handleToggleClick(entry) {
+    var next = !entry.removed;
+    if (next) {
+      var othersVisible = entries.some(function(e) { return e !== entry && !e.removed; });
+      if (!othersVisible) {
+        entry.warning.textContent = i18n.lastSectionWarning;
+        entry.warning.style.display = 'inline';
+        setTimeout(function() { entry.warning.style.display = 'none'; }, 3000);
+        return;
+      }
+    }
+    applyState(entry, next);
+    window.parent.postMessage({ type: 'toggle_section', sectionId: entry.id, removed: next }, '*');
+  }
+
+  document.querySelectorAll('section[data-section]').forEach(function(section) {
+    var sectionId = section.dataset.section;
+
+    var editor = buildEditor(sectionId, analyses[sectionId] || '');
     var existing = section.querySelector('.analysis');
     if (existing) {
       existing.replaceWith(editor);
@@ -1003,6 +1046,47 @@ const ReportGeneratorInterface = () => {
       if (placeholder) placeholder.replaceWith(editor);
       else section.appendChild(editor);
     }
+
+    // Wrap all existing content (h2, figure, analysis editor) so it can be collapsed as a unit
+    var body = document.createElement('div');
+    while (section.firstChild) { body.appendChild(section.firstChild); }
+
+    var toggleBar = document.createElement('div');
+    toggleBar.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-bottom:6px;';
+
+    var warning = document.createElement('span');
+    warning.style.cssText = 'font-size:12px;color:#b91c1c;display:none;';
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.style.cssText = 'font-size:12px;font-weight:600;padding:4px 10px;border-radius:5px;border:1px solid #fca5a5;background:#fef2f2;color:#b91c1c;cursor:pointer;';
+
+    var notice = document.createElement('p');
+    notice.textContent = i18n.removedNotice;
+    notice.style.cssText = 'display:none;font-size:13px;color:#6b7280;font-style:italic;margin:0 0 6px;';
+
+    toggleBar.appendChild(warning);
+    toggleBar.appendChild(btn);
+    section.appendChild(toggleBar);
+    section.appendChild(notice);
+    section.appendChild(body);
+
+    section.style.border = '1px solid #e5e7eb';
+    section.style.borderRadius = '8px';
+    section.style.padding = '16px 18px';
+    section.style.margin = '0 0 20px';
+    section.style.transition = 'opacity .15s ease';
+
+    var entry = { id: sectionId, section: section, body: body, notice: notice, btn: btn, warning: warning, removed: false };
+    btn.addEventListener('click', function() { handleToggleClick(entry); });
+    entries.push(entry);
+    applyState(entry, !!removedMap[sectionId]);
+  });
+
+  window.addEventListener('message', function(ev) {
+    if (!ev.data || ev.data.type !== 'revert_section_toggle') return;
+    var entry = entries.filter(function(e) { return e.id === ev.data.sectionId; })[0];
+    if (entry) applyState(entry, ev.data.removed);
   });
 })();
 <\/script>`;
@@ -1041,7 +1125,8 @@ const ReportGeneratorInterface = () => {
           } catch (_) { /* skip missing CSS */ }
         }
 
-        setReportPreviewHtml(buildEditorHtml(html, analyses, API_BASE_URL, tr));
+        const removedMap = Object.fromEntries(sections.map(s => [s.id, !!s.removed]));
+        setReportPreviewHtml(buildEditorHtml(html, analyses, API_BASE_URL, tr, removedMap));
       } catch (_) {
         setReportPreviewHtml(
           '<body style="font-family:sans-serif;padding:2rem;color:#b91c1c"><h2>Report HTML not available.</h2></body>'
@@ -1050,20 +1135,38 @@ const ReportGeneratorInterface = () => {
     };
 
     build();
-  }, [editMode, compilationId]); // intentionally omit analyses and lang — editors init from snapshot, then self-manage
+  }, [editMode, compilationId]); // intentionally omit analyses/sections and lang — editors init from snapshot, then self-manage
 
-  // Listen for save_analysis postMessages from the iframe
+  // Listen for save_analysis / toggle_section postMessages from the iframe
   useEffect(() => {
     if (!editMode) return;
     const handler = (event) => {
-      if (event.data?.type !== 'save_analysis') return;
-      const { sectionId, content } = event.data;
-      setAnalyses(prev => ({ ...prev, [sectionId]: content }));
-      fetch(`${API_BASE_URL}/analyses/${compilationId}/${sectionId}`, {
-        method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
-      }).catch(err => console.error('Analysis save failed:', err));
+      if (event.data?.type === 'save_analysis') {
+        const { sectionId, content } = event.data;
+        setAnalyses(prev => ({ ...prev, [sectionId]: content }));
+        fetch(`${API_BASE_URL}/analyses/${compilationId}/${sectionId}`, {
+          method: 'PUT',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content }),
+        }).catch(err => console.error('Analysis save failed:', err));
+      } else if (event.data?.type === 'toggle_section') {
+        const { sectionId, removed } = event.data;
+        setSections(prev => prev.map(s => s.id === sectionId ? { ...s, removed } : s));
+        fetch(`${API_BASE_URL}/sections/${compilationId}/${sectionId}`, {
+          method: 'PUT',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ removed }),
+        }).then(async (res) => {
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            setSections(prev => prev.map(s => s.id === sectionId ? { ...s, removed: !removed } : s));
+            iframeRef.current?.contentWindow?.postMessage(
+              { type: 'revert_section_toggle', sectionId, removed: !removed }, '*'
+            );
+            setError(err.detail || 'Failed to update section visibility');
+          }
+        }).catch(err => console.error('Section toggle save failed:', err));
+      }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
@@ -1222,12 +1325,7 @@ const ReportGeneratorInterface = () => {
       }
 
       // Fetch sections + analyses, then enter edit mode directly
-      const [secRes, anaRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/report-sections/${compId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch(`${API_BASE_URL}/analyses/${compId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
-      ]);
-      if (secRes.ok) setSections(await secRes.json());
-      if (anaRes.ok) setAnalyses(await anaRes.json());
+      await loadSectionsAndAnalyses(compId);
       setCompilationId(compId);
       setUploadFile(null);
       setEditMode(true);

@@ -80,6 +80,18 @@ def init_database():
         )
     ''')
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS report_section_state (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            comp_id TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            section_id TEXT NOT NULL,
+            removed BOOLEAN DEFAULT FALSE,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(comp_id, section_id)
+        )
+    ''')
+
     conn.commit()
     conn.close()
 
@@ -404,6 +416,57 @@ def delete_old_analyses(retention_days: int) -> None:
     cursor = conn.cursor()
     cursor.execute(
         "DELETE FROM report_analyses WHERE updated_at < datetime('now', ?)",
+        (f"-{retention_days} days",)
+    )
+    conn.commit()
+    conn.close()
+
+
+# ── Report section removal state CRUD ────────────────────────────────────
+
+def get_removed_sections(comp_id: str, user_id: int) -> List[str]:
+    """Return the list of section_ids marked as removed for a given comp_id."""
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT section_id FROM report_section_state WHERE comp_id = ? AND user_id = ? AND removed = 1",
+        (comp_id, user_id)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [row["section_id"] for row in rows]
+
+
+def set_section_removed(comp_id: str, user_id: int, section_id: str, removed: bool) -> None:
+    """Insert or replace the removed flag for a single section."""
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT OR REPLACE INTO report_section_state
+           (comp_id, user_id, section_id, removed, updated_at)
+           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+        (comp_id, user_id, section_id, removed)
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_section_state(comp_id: str) -> None:
+    """Delete all section removal state for a comp_id (called during compilation cleanup)."""
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM report_section_state WHERE comp_id = ?", (comp_id,))
+    conn.commit()
+    conn.close()
+
+
+def delete_old_section_state(retention_days: int) -> None:
+    """Delete section removal state older than retention_days (background cleanup)."""
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM report_section_state WHERE updated_at < datetime('now', ?)",
         (f"-{retention_days} days",)
     )
     conn.commit()

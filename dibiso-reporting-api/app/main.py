@@ -87,6 +87,10 @@ from .users import (
     upsert_analysis,
     delete_analyses,
     delete_old_analyses,
+    get_removed_sections,
+    set_section_removed,
+    delete_section_state,
+    delete_old_section_state,
 )
 
 
@@ -177,6 +181,10 @@ async def cleanup_old_compilations():
                         delete_analyses(comp_id)
                     except Exception as e:
                         logger.error(f"Error deleting analyses for {comp_id}: {e}")
+                    try:
+                        delete_section_state(comp_id)
+                    except Exception as e:
+                        logger.error(f"Error deleting section state for {comp_id}: {e}")
 
             if to_remove_status:
                 logger.info(f"Cleaned up {len(to_remove_status)} old compilation statuses from memory.")
@@ -186,6 +194,10 @@ async def cleanup_old_compilations():
                 delete_old_analyses(analyses_retention_days)
             except Exception as e:
                 logger.error(f"Error in old analyses cleanup: {e}")
+            try:
+                delete_old_section_state(analyses_retention_days)
+            except Exception as e:
+                logger.error(f"Error in old section state cleanup: {e}")
 
             # --- Clean up old temporary directories on file system ---
             temp_root_dir = Path(tempfile.gettempdir())
@@ -686,9 +698,10 @@ def render_html(project_dir: Path, output_dir: Path, comp_id: str) -> bool:
     user_id = compilation_status[comp_id].get('user_id')
     raw_analyses = get_analyses(comp_id, user_id) if user_id else {}
     analyses_html = {k: markdown.markdown(v) for k, v in raw_analyses.items() if v}
+    removed_sections = get_removed_sections(comp_id, user_id) if user_id else []
 
     try:
-        DibisoReporting.render_from_saved(str(project_dir), analyses_html)
+        DibisoReporting.render_from_saved(str(project_dir), analyses_html, removed_sections=removed_sections)
     except Exception as e:
         logger.error(f"Jinja2 render failed for {comp_id}: {e}")
         update_compilation_status(comp_id, 0, f"Report rendering failed: {e}", "failed")
@@ -1114,19 +1127,17 @@ def _get_comp_project_dir(comp_id: str, current_user: dict) -> Path:
     return Path(project_dir)
 
 
-@app.get("/report-sections/{comp_id}")
-async def get_report_sections(
-    comp_id: str,
-    current_user: Annotated[dict, Depends(get_current_active_user)]
-):
-    """Return the list of editable sections for a completed report."""
-    project_dir = _get_comp_project_dir(comp_id, current_user)
+def _get_available_sections(project_dir: Path) -> list[dict]:
+    """
+    Return the sections that can be shown/edited for a completed report: sections
+    with no figure (free-text only) are always included; figure sections are
+    included only if their figure was actually generated.
+    """
     figures_json = project_dir / "figures.json"
     context_json = project_dir / "context.json"
     if not figures_json.exists() or not context_json.exists():
         raise HTTPException(status_code=404, detail="Report data not available yet")
 
-    import json
     with open(figures_json, encoding="utf-8") as f:
         generated_figures: set = set(json.load(f).keys())
     with open(context_json, encoding="utf-8") as f:
@@ -1140,6 +1151,46 @@ async def get_report_sections(
         if not has_figure or sec["id"] in generated_figures:
             result.append({"id": sec["id"], "label": sec["label"], "has_figure": has_figure and sec["id"] in generated_figures})
     return result
+
+
+@app.get("/report-sections/{comp_id}")
+async def get_report_sections(
+    comp_id: str,
+    current_user: Annotated[dict, Depends(get_current_active_user)]
+):
+    """Return the list of editable sections for a completed report."""
+    project_dir = _get_comp_project_dir(comp_id, current_user)
+    available = _get_available_sections(project_dir)
+    removed = set(get_removed_sections(comp_id, current_user['id']))
+    return [{**sec, "removed": sec["id"] in removed} for sec in available]
+
+
+class SectionStateUpdate(BaseModel):
+    removed: bool
+
+
+@app.put("/sections/{comp_id}/{section_id}")
+async def update_section_state(
+    comp_id: str,
+    section_id: str,
+    body: SectionStateUpdate,
+    current_user: Annotated[dict, Depends(get_current_active_user)]
+):
+    """Toggle whether a section is hidden from the rendered report. At least one
+    available section must remain visible."""
+    project_dir = _get_comp_project_dir(comp_id, current_user)
+    available_ids = {sec["id"] for sec in _get_available_sections(project_dir)}
+    if section_id not in available_ids:
+        raise HTTPException(status_code=404, detail="Section not found")
+
+    if body.removed:
+        currently_removed = set(get_removed_sections(comp_id, current_user['id']))
+        currently_removed.add(section_id)
+        if available_ids <= currently_removed:
+            raise HTTPException(status_code=400, detail="At least one section must remain visible")
+
+    set_section_removed(comp_id, current_user['id'], section_id, body.removed)
+    return {"message": "saved"}
 
 
 @app.get("/analyses/{comp_id}")
@@ -1351,7 +1402,8 @@ def _render_pdf(project_dir: Path, output_dir: Path, comp_id: str, name: str) ->
     user_id = compilation_status.get(comp_id, {}).get('user_id')
     raw_analyses = get_analyses(comp_id, user_id) if user_id else {}
     analyses_html = {k: md_lib.markdown(v) for k, v in raw_analyses.items() if v}
-    DibisoReporting.render_from_saved(str(project_dir), analyses_html)
+    removed_sections = get_removed_sections(comp_id, user_id) if user_id else []
+    DibisoReporting.render_from_saved(str(project_dir), analyses_html, removed_sections=removed_sections)
 
     html_path = project_dir / f"{name}.html"
     if not html_path.exists():
@@ -1378,8 +1430,9 @@ def _do_export(comp_id: str, user_id: int, project_dir: Path, output_dir: Path):
     # Step 1: Re-render HTML with current analyses
     try:
         raw_analyses = get_analyses(comp_id, user_id)
+        removed_sections = get_removed_sections(comp_id, user_id)
         analyses_html = {k: md_lib.markdown(v) for k, v in raw_analyses.items() if v}
-        DibisoReporting.render_from_saved(str(project_dir), analyses_html)
+        DibisoReporting.render_from_saved(str(project_dir), analyses_html, removed_sections=removed_sections)
     except Exception as e:
         logger.error(f"Render failed for export {comp_id}: {e}")
         with compilation_lock:
@@ -1395,6 +1448,14 @@ def _do_export(comp_id: str, user_id: int, project_dir: Path, output_dir: Path):
         )
     except Exception as e:
         logger.warning(f"Could not save analyses.json for {comp_id}: {e}")
+
+    # Bundle removed-section choices alongside analyses so they can be re-imported from the ZIP
+    try:
+        (project_dir / "removed_sections.json").write_text(
+            json.dumps(removed_sections, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception as e:
+        logger.warning(f"Could not save removed_sections.json for {comp_id}: {e}")
 
     # Step 2: Inline CSS+assets → self-contained HTML in output dir
     _tsubdir = _get_template_subdir(project_dir)
@@ -1643,14 +1704,14 @@ async def cancel_compilation(
 
 # ── Upload project ZIP ───────────────────────────────────────────────────────
 
-def _do_upload_render(project_dir: Path, raw_analyses: dict, user_id: int, context_data: dict):
+def _do_upload_render(project_dir: Path, raw_analyses: dict, user_id: int, context_data: dict, removed_sections: list | None = None):
     """Render HTML from an uploaded project ZIP and register it. Returns (comp_id, acronym, year)."""
     import markdown as md_lib
     from dibisoreporting import DibisoReporting
 
     try:
         analyses_html = {k: md_lib.markdown(v) for k, v in raw_analyses.items() if v}
-        DibisoReporting.render_from_saved(str(project_dir), analyses_html)
+        DibisoReporting.render_from_saved(str(project_dir), analyses_html, removed_sections=removed_sections)
     except Exception as e:
         shutil.rmtree(project_dir, ignore_errors=True)
         raise RuntimeError(f"Could not render report from ZIP: {e}")
@@ -1682,6 +1743,9 @@ def _do_upload_render(project_dir: Path, raw_analyses: dict, user_id: int, conte
 
     for section_id, content in raw_analyses.items():
         upsert_analysis(comp_id, user_id, section_id, content)
+
+    for section_id in (removed_sections or []):
+        set_section_removed(comp_id, user_id, section_id, True)
 
     return comp_id, context_data.get('labacronym', ''), context_data.get('reportyear', '')
 
@@ -1776,6 +1840,16 @@ async def upload_project(
             except Exception:
                 pass
 
+        # 7b. Read removed_sections.json if present (optional, ignore parse errors)
+        removed_sections = []
+        if "removed_sections.json" in names:
+            try:
+                r = json.loads(zf.read("removed_sections.json"))
+                if isinstance(r, list):
+                    removed_sections = [s for s in r if isinstance(s, str)]
+            except Exception:
+                pass
+
         # 8. Extract ZIP to a new project dir
         project_dir = Path(tempfile.mkdtemp(prefix="html_output_"))
         try:
@@ -1790,7 +1864,7 @@ async def upload_project(
         comp_id, entity_acronym, year = await loop.run_in_executor(
             thread_pool,
             _do_upload_render,
-            project_dir, raw_analyses, current_user['id'], context_data
+            project_dir, raw_analyses, current_user['id'], context_data, removed_sections
         )
     except RuntimeError as e:
         raise HTTPException(status_code=422, detail=str(e))
