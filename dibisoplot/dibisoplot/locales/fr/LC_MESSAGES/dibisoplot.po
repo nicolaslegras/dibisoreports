@@ -161,8 +161,8 @@ msgid "Journal"
 msgstr "Revue"
 
 #: biso/biso.py:1856
-msgid "Number of works"
-msgstr "Nombre de travaux"
+msgid "Number of works in BSO"
+msgstr "Nombre de travaux dans le BSO"
 
 #: biso/biso.py:1857
 msgid "Access type on the journal"
@@ -173,8 +173,8 @@ msgid "Open access on a repository"
 msgstr "Accès ouvert sur une archive"
 
 #: biso/biso.py:1859
-msgid "Paid APC $ (found/total works)"
-msgstr "APC payés $ (trouvés/total travaux)"
+msgid "Paid APC (€)"
+msgstr "APC payés (€)"
 
 #: biso/biso.py:1865
 msgid "List of journals, publishers, open access status and paid APC"

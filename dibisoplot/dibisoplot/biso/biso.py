@@ -61,11 +61,7 @@ class Biso(Dibisoplot):
             scanr_api_url: str | None = None,
             scanr_api_username: str | None = None,
             scanr_bso_index: str | None = None,
-<<<<<<< HEAD
-            scanr_bso_version: str = "2025Q4",
-=======
             scanr_bso_version: str | None = None,   # Now calculated dynamically
->>>>>>> c56de6e (Implementation of Books class and open access colors in Journals class (with decision table for scanr imprecision handling))
             scanr_chunk_size: int = 50,
             scanr_publications_index: str | None = None,
             template: str = "simple_white",
@@ -1361,25 +1357,10 @@ class Journals(Biso):
             return mapping.get(color, "?")
 
         def format_is_oa_on_repository(row) -> str:
-<<<<<<< HEAD
-            return get_oa_status_latex_emoji(row["is_oa_on_repository"])
-
-        def get_oa_status_latex_emoji(status) -> str:
-            # Plain text-presentation glyphs, not color emoji (✅❌❓): WeasyPrint renders
-            # color/bitmap emoji (Noto Color Emoji) at the wrong scale, producing tiny,
-            # clipped icons in the PDF. These render as normal vector glyphs in any font.
-            if pd.isna(status):
-                return "?"
-            elif status:
-                return "✓"
-            else:
-                return "✗"
-=======
             status=row["is_oa_on_repository"]
             if pd.isna(status) or not status:
                 return "X"#"❌"
             return "O"#"✅"
->>>>>>> c56de6e (Implementation of Books class and open access colors in Journals class (with decision table for scanr imprecision handling))
 
         try:
             if self.scanr_api_url is None:

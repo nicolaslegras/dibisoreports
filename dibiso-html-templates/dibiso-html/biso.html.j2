@@ -138,15 +138,15 @@
 <section id="journals" data-section="journals">
   <h2>Revues et voies d'accès ouvert (BSO) <span class="section-badge">bêta</span></h2>
   <p>Ce tableau utilise des données du Baromètre français de la Science Ouverte. Ces données sont compilées le dernier trimestre de chaque année (généralement en décembre), sur les données de l'année précédente. Ainsi, le tableau montre le nombre de publications en accès ouvert lors du trimestre {{ reportyear | default('') }}Q4.</p>
-  {% if bsojournalsnbworks is defined and bsojournalsnbworksfoundinbso is defined and bsojournalsnbworks and bsojournalsnbworksfoundinbso %}<p>Il existe généralement un déficit de couverture d'environ 30&nbsp;% par rapport à HAL&nbsp;: sur {{ bsojournalsnbworks }} travaux dans HAL, {{ bsojournalsnbworksfoundinbso }} ont été trouvées dans le BSO.</p>{% endif %}
+  {% if bsojournalsnbworks is defined and bsojournalsnbworksfoundinbso is defined and bsojournalsnbworks and bsojournalsnbworksfoundinbso %}<p><strong>Il existe généralement un déficit de couverture d'environ 30&nbsp;% par rapport à HAL&nbsp;: sur {{ bsojournalsnbworks }} travaux dans HAL, {{ bsojournalsnbworksfoundinbso }} ont été trouvées dans le BSO.</strong></p>{% endif %}
   <p>La colonne « APC payés » indique le montant de frais APC détecté comme payé par le BSO. Comme toute donnée collectée à travers de multiples sources hétérogènes, certaines données peuvent être manquantes ou inexactes, mais permettent néanmoins d'avoir un aperçu général de l'ouverture de la production scientifique.</p>
   
   <p>
     <strong>Légende :</strong> 
     D = Diamond | 
     Go = Gold | 
-    H = Hybrid | 
-    Gr = Green (Archive) | 
+    HO = Hybrid Ouvert | 
+    HNO = Hybrid Non Ouvert | 
     X = Pas d'accès | 
     ? = Autre
   </p>                                                        
