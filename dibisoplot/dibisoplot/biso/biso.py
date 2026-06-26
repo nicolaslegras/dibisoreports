@@ -1271,34 +1271,18 @@ class Journals(Biso):
     """
 
     COLOR_RULES = [
-        {"oa_color": "green_only",     "is_oa": False, "journal_is_oa": False,  "has_apc": False,  "color_final": "closed"},
-        {"oa_color": "green_only",     "is_oa": False, "journal_is_oa": False,  "has_apc": True,  "color_final": "other"},
-        {"oa_color": "green_only",     "is_oa": False, "journal_is_oa": True,   "has_apc": False,  "color_final": "other"},
-        {"oa_color": "green_only",     "is_oa": False, "journal_is_oa": True,   "has_apc": True,  "color_final": "other"},
-        {"oa_color": "green_only",     "is_oa": False, "journal_is_oa": None,   "has_apc": False,  "color_final": "ambiguous_gold_hybrid"},
-        {"oa_color": "green_only",     "is_oa": False, "journal_is_oa": None,   "has_apc": True,  "color_final": "ambiguous_gold_hybrid"},
-        {"oa_color": "green_only",     "is_oa": True, "journal_is_oa": False,  "has_apc": False,  "color_final": "hybrid"},
-        {"oa_color": "green_only",     "is_oa": True, "journal_is_oa": False,  "has_apc": True,  "color_final": "hybrid"},
-        {"oa_color": "green_only",     "is_oa": True, "journal_is_oa": True,   "has_apc": False,  "color_final": "ambiguous_gold_diamond"},
-        {"oa_color": "green_only",     "is_oa": True, "journal_is_oa": True,   "has_apc": True,  "color_final": "gold"},
-        {"oa_color": "green_only",     "is_oa": True, "journal_is_oa": None,   "has_apc": False,  "color_final": "other"},
-        {"oa_color": "green_only",     "is_oa": True, "journal_is_oa": None,   "has_apc": True,  "color_final": "ambiguous_gold_hybrid"},
-        {"oa_color": "other",     "is_oa": False, "journal_is_oa": False,  "has_apc": False,  "color_final": "closed"},
-        {"oa_color": "other",     "is_oa": False, "journal_is_oa": False,  "has_apc": True,  "color_final": "other"}, # Useless, kept in case we determine a color for this configuration
-        {"oa_color": "other",     "is_oa": False, "journal_is_oa": True,   "has_apc": False,  "color_final": "other"}, # Useless, kept in case we determine a color for this configuration
-        {"oa_color": "other",     "is_oa": False, "journal_is_oa": True,   "has_apc": True,  "color_final": "other"}, # Useless, kept in case we determine a color for this configuration
-        {"oa_color": "other",     "is_oa": False, "journal_is_oa": None,   "has_apc": False,  "color_final": "ambiguous_gold_hybrid"},
-        {"oa_color": "other",     "is_oa": False, "journal_is_oa": None,   "has_apc": True,  "color_final": "ambiguous_gold_hybrid"},
-        {"oa_color": "other",     "is_oa": True, "journal_is_oa": False,  "has_apc": False,  "color_final": "hybrid"},
-        {"oa_color": "other",     "is_oa": True, "journal_is_oa": False,  "has_apc": True,  "color_final": "hybrid"},
-        {"oa_color": "other",     "is_oa": True, "journal_is_oa": True,   "has_apc": False,  "color_final": "ambiguous_gold_diamond"},
-        {"oa_color": "other",     "is_oa": True, "journal_is_oa": True,   "has_apc": True,  "color_final": "gold"},
-        {"oa_color": "other",     "is_oa": True, "journal_is_oa": None,   "has_apc": False,  "color_final": "other"}, # Useless, kept in case we determine a color for this configuration
-        {"oa_color": "other",     "is_oa": True, "journal_is_oa": None,   "has_apc": True,  "color_final": "ambiguous_gold_hybrid"},
-
+        {"oa_color": "other",     "is_oa": True, "journal_is_oa": False,  "has_apc": ["missing", "zero", "numeric"], "color_final": "hybrid"},
+        
+        {"oa_color": "other",     "is_oa": True, "journal_is_oa": True,   "has_apc": "missing",  "color_final": "ambiguous_gold_diamond"},
+        {"oa_color": "other",     "is_oa": True, "journal_is_oa": True,   "has_apc": "zero",  "color_final": "diamond"},
+        {"oa_color": "other",     "is_oa": True, "journal_is_oa": True,   "has_apc": "numeric",  "color_final": "gold"},
+        
+        {"oa_color": "other",     "is_oa": True, "journal_is_oa": None,   "has_apc": "missing",  "color_final": "other"}, #Useless, kept in case of future decision
+        {"oa_color": "other",     "is_oa": True, "journal_is_oa": None,   "has_apc": "zero",  "color_final": "diamond"},
+        {"oa_color": "other",     "is_oa": True, "journal_is_oa": None,   "has_apc": "numeric",  "color_final": "ambiguous_gold_hybrid"}
     ]
 
-    RESOLVE_COLORS = pd.DataFrame.from_records(COLOR_RULES)
+    RESOLVE_COLORS = pd.DataFrame.from_records(COLOR_RULES).explode('has_apc')
 
     figure_file_extension = "tex"
     html_figure_type = "html_table"
@@ -1327,31 +1311,30 @@ class Journals(Biso):
         """
 
         def format_apc(row):
-            if pd.notna(row['apc_paid_value_usd']):
-                return f"{int(row['apc_paid_value_usd'])}"
-            
-            # If value is missing, we need to check the other parameters
-            journal_color = row['oa_color']
+            if pd.notna(row['amount_apc_EUR']):
+                return f"{int(row['amount_apc_EUR'])}"
             # If the journal is diamond OA, we can assume that the APC is 0
-            if "D" in journal_color:
+            if row['oa_color']=="D":
                 return "0"
             # If the journal is closed, hybrid, or gold OA, we can assume that the APC is missing
-            return "?"
+            return None
         
         def format_color(row) -> str:
             color = row["color_final"] if pd.notna(row["color_final"]) else row["oa_color"]
-            # Check for missing values and handle lists
             if pd.isna(color):
-                return "?"#"❓"
-            
+                return "?" # "❓"
+            if color=="hybrid":
+                if row["has_apc"]=="numeric":
+                    return "HO"
+                elif row["has_apc"]=="zero":
+                    return "HNO"
+                return "H"
             mapping = {
                 "closed": "X",  # "❌"
-                "hybrid": "H",  # "🟤"
-                "gold": "Go",  # "🟡"
+                "gold": "G",  # "🟡"
                 "diamond": "D",  # "💎"
-                "green_only": "Gro",  # "🟢"
-                "ambiguous_gold_hybrid": "G/H",
-                "ambiguous_gold_diamond": "G/D",
+                "ambiguous_gold_hybrid": "G/H", # "🟡/🟤"
+                "ambiguous_gold_diamond": "G/D", # "🟡/💎"
                 "other": "?"  # "❓"
             }
             return mapping.get(color, "?")
@@ -1359,8 +1342,8 @@ class Journals(Biso):
         def format_is_oa_on_repository(row) -> str:
             status=row["is_oa_on_repository"]
             if pd.isna(status) or not status:
-                return "X"#"❌"
-            return "O"#"✅"
+                return "X" # "❌"
+            return "O" # "✅"
 
         try:
             if self.scanr_api_url is None:
@@ -1384,7 +1367,7 @@ class Journals(Biso):
                 f"oa_details.{self.scanr_bso_version}.oa_colors_with_priority_to_publisher",
                 f"oa_details.{self.scanr_bso_version}.is_oa",
                 f"oa_details.{self.scanr_bso_version}.journal_is_oa",
-                "apc_paid.value_usd",
+                "amount_apc_EUR",
                 f"oa_details.{self.scanr_bso_version}.oa_host_type",
             ]
             works = self.get_works_from_es_index_from_id_by_chunk(
@@ -1410,8 +1393,17 @@ class Journals(Biso):
                 host_types_raw=bso_data.get("oa_host_type", "")
                 host_types=host_types_raw.split(";") if host_types_raw else []
 
-                # Determine if present in openaccess in repository (no need for green color if on repository)
+                # Determine if present in openaccess in repository
                 is_on_repository="repository" in host_types
+
+                # Determine APC status
+                apc_val = source.get("amount_apc_EUR")
+                if pd.isna(apc_val):
+                    apc_status = "missing"
+                elif apc_val == 0:
+                    apc_status = "zero"
+                else:
+                    apc_status = "numeric"
 
                 works_clean.append({
 
@@ -1420,14 +1412,15 @@ class Journals(Biso):
                     "oa_color": journal_color,
                     "is_oa": bso_data.get("is_oa"),
                     "journal_is_oa": bso_data.get("journal_is_oa"),
-                    "has_apc": pd.notna(source.get("apc_paid", {}).get("value_usd")),
-                    "apc_paid_value_usd": source.get("apc_paid", {}).get("value_usd"),
+                    "has_apc": apc_status,
+                    "amount_apc_EUR": apc_val,
                     "is_oa_on_repository": is_on_repository,
                 })
             works=works_clean
 
             self.data = pd.DataFrame.from_records(works)
 
+            self.data['oa_color'] = self.data['oa_color'].fillna('other').replace('green_only', 'other')
             self.data = self.data.merge(self.RESOLVE_COLORS, on=["oa_color", "is_oa", "journal_is_oa", "has_apc"], how="left")
 
             if len(self.data.index) == 0:
@@ -1448,26 +1441,20 @@ class Journals(Biso):
             # format values
             self.data['oa_color'] = self.data.apply(format_color, axis=1)
             self.data['paid_apc'] = self.data.apply(format_apc, axis=1)
-            self.data.drop(['apc_paid_value_usd'], axis=1, inplace=True)
+            self.data.drop(['amount_apc_EUR'], axis=1, inplace=True)
             self.data['is_oa_on_repository'] = self.data.apply(format_is_oa_on_repository, axis=1)
 
             def merge_cells(group):
-                # Arrange APC string to count the number of works with APC found
-                is_apc_numeric = group['paid_apc'].notna() & (~group['paid_apc'].isin(['?']))
-                nb_apc_found = is_apc_numeric.sum()
-                nb_total_works = len(group)
                 apc_list = group['paid_apc'].dropna().tolist()
-
-
                 if apc_list:
-                    apc_str = f"{', '.join(apc_list)} ({nb_apc_found}/{nb_total_works})"
+                    apc_str = f"{', '.join(apc_list)}"
                 else:
-                    apc_str = f"({nb_apc_found}/{nb_total_works})"
+                    apc_str = ""
 
                 merged_data = {
                     "journal_name": group.name,
                     "publisher": ' ; '.join(group['publisher'].dropna().unique()),
-                    "nb_works": nb_total_works,
+                    "nb_works": len(group),
                     "oa_color": ' '.join(group['oa_color']),
                     "is_oa_on_repository": ' '.join(group['is_oa_on_repository']),
                     "paid_apc": apc_str
@@ -1526,10 +1513,10 @@ class Journals(Biso):
         df = df.rename(columns={
             "journal_name": self._("Journal"),
             "publisher": self._("Publisher"),
-            "nb_works": self._("Number of works"),
+            "nb_works": self._("Number of works in BSO"),
             "oa_color": self._("Access type on the journal"),
             "is_oa_on_repository": self._("Open access on a repository"),
-            "paid_apc": self._("Paid APC $ (found/total works)"),
+            "paid_apc": self._("Paid APC (€)"),
         })
 
         return self.dataframe_to_html_table(
